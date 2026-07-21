@@ -1,0 +1,6 @@
+{
+  "name": "Govee H7015 Bulb Editor",
+  "render_readme": true,
+  "content_in_root": true,
+  "filename": "govee-h7015-bulb-card.js"
+}

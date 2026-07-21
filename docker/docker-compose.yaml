@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  govee-h7015-bridge:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: govee-h7015-bridge
+    restart: unless-stopped
+    env_file: ../.env
+    # Host network is the easiest way to reach a local MQTT broker.
+    network_mode: host
+    # Access to the host's Bluetooth radio via BlueZ over D-Bus.
+    # NET_ADMIN is what BlueZ's HCI ioctls actually need — narrower than
+    # `privileged: true`, which grants the container full host access.
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - /var/run/dbus:/var/run/dbus
+      - /dev/bus/usb:/dev/bus/usb
+    devices:
+      - /dev/bus/usb

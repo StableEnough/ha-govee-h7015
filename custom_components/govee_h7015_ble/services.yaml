@@ -1,0 +1,43 @@
+set_bulb:
+  name: Set bulb color
+  description: Set the color of a single bulb on a Govee H7015 string light.
+  target:
+    device:
+      integration: govee_h7015_ble
+  fields:
+    bulb:
+      name: Bulb
+      description: Bulb index (0-14, counting from the controller end).
+      required: true
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 14
+          step: 1
+          mode: box
+    rgb:
+      name: RGB color
+      description: RGB color as a list of three integers 0-255.
+      required: true
+      example: [255, 0, 0]
+      selector:
+        color_rgb: {}
+
+snapshot_scene:
+  name: Snapshot current colors as scene
+  description: >-
+    Snapshots the current per-bulb colors and creates a HA scene using the
+    built-in scene.create service. The scene can then be activated from the
+    dashboard, automations, or voice commands. Requires a target device.
+  target:
+    device:
+      integration: govee_h7015_ble
+  fields:
+    scene_name:
+      name: Scene name
+      description: The name for the new scene (e.g. "Christmas", "Date Night").
+      required: true
+      example: Christmas
+      selector:
+        text:

@@ -1,0 +1,19 @@
+{
+  "domain": "govee_h7015_ble",
+  "name": "Govee H7015 BLE",
+  "codeowners": ["@StableEnough"],
+  "config_flow": true,
+  "documentation": "https://github.com/StableEnough/ha-govee-h7015",
+  "issue_tracker": "https://github.com/StableEnough/ha-govee-h7015/issues",
+  "iot_class": "local_polling",
+  "loggers": ["govee_h7015_ble"],
+  "requirements": ["bleak-retry-connector>=3.4"],
+  "dependencies": ["bluetooth"],
+  "after_deps": ["bluetooth"],
+  "version": "1.1.0",
+  "bluetooth": [
+    {
+      "local_name": "H7015_*"
+    }
+  ]
+}
