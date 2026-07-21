@@ -160,9 +160,14 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
                 reason = await self._get_reachability_reason()
                 raise UpdateFailed(f"H7015 {self.mac} not discovered via HA Bluetooth: {reason}")
 
-            client = await self._build_client(ble_device)
             try:
                 async with asyncio.timeout(BLE_CONNECT_TIMEOUT):
+                    # establish_connection() (inside _build_client) is what
+                    # actually performs the BLE connect over BlueZ D-Bus and
+                    # can hang indefinitely if the device never responds —
+                    # it must be inside the timeout, not client.connect(),
+                    # which is a no-op once already connected.
+                    client = await self._build_client(ble_device)
                     await client.connect()
                 await asyncio.sleep(0.2)  # service-discovery quirk
             except TimeoutError as exc:
