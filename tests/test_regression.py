@@ -6,6 +6,8 @@ These tests verify that specific bugs stay fixed:
 - D1: GoveeH7015Client.is_connected missing (crashed the MQTT bridge's poll loop)
 - D2: Reconfigure flow didn't detect MAC collisions with other entries
 - D3: Diagnostics dump included the MAC address unredacted
+- D4: BLE_CONNECT_TIMEOUT didn't cover the actual connect call, so a
+  non-responding device hung setup forever instead of retrying
 """
 
 from __future__ import annotations
@@ -13,6 +15,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -265,7 +269,6 @@ def test_govee_h7015_client_is_connected_reflects_ble_client() -> None:
 async def test_reconfigure_rejects_mac_already_used_by_another_entry(hass) -> None:  # type: ignore[no-untyped-def]
     """Reconfiguring entry A to entry B's MAC must abort, not succeed."""
     if not USE_MOCK_ENTRY:
-        pytest = __import__("pytest")
         pytest.skip("requires pytest_homeassistant_custom_component")
 
     entry_a = MockConfigEntry(
@@ -336,3 +339,50 @@ async def test_diagnostics_redacts_mac(hass) -> None:  # type: ignore[no-untyped
     assert "AA:BB:CC:DD:EE:FF" not in str(diag)
     assert diag["entry"]["data"]["mac"] == "**REDACTED**"
     assert diag["device"]["mac"] == "**REDACTED**"
+
+
+# ===========================================================================
+# D4 Regression: BLE_CONNECT_TIMEOUT didn't cover the actual connect call
+#
+# _ensure_connected() built the client via _build_client() (which calls
+# bleak-retry-connector's establish_connection() — the call that actually
+# talks to BlueZ over D-Bus and can hang indefinitely for an unresponsive
+# device) *before* entering the asyncio.timeout() block. The timeout only
+# wrapped the redundant client.connect() call afterward, which is a no-op
+# once already connected. A device that never responds hung setup forever
+# instead of failing over to setup_retry.
+# ===========================================================================
+
+
+async def test_ensure_connected_times_out_when_build_client_hangs(hass) -> None:  # type: ignore[no-untyped-def]
+    """A _build_client() that never returns must not hang _ensure_connected()."""
+    import asyncio
+
+    from custom_components.govee_h7015_ble import coordinator as coordinator_module
+
+    async def hanging_build_client(self, ble_device):  # type: ignore[no-untyped-def]
+        await asyncio.sleep(10)
+        raise AssertionError("should have timed out before this point")
+
+    async def fake_lookup(hass, mac, connectable):  # type: ignore[no-untyped-def]
+        return object()  # any non-None sentinel is enough to pass the discovery check
+
+    coordinator = H7015Coordinator(
+        hass,
+        mac="AA:BB:CC:DD:EE:FF",
+        name="Patio Lights",
+        poll_interval=60,
+        entry_id="d4_regress",
+        ble_device_lookup=fake_lookup,
+    )
+
+    with (
+        patch.object(coordinator_module, "BLE_CONNECT_TIMEOUT", 0.05),
+        patch.object(H7015Coordinator, "_build_client", hanging_build_client),
+    ):
+        from homeassistant.helpers.update_coordinator import UpdateFailed
+
+        from custom_components.govee_h7015_ble.exceptions import GoveeConnectionError
+
+        with pytest.raises((UpdateFailed, GoveeConnectionError)):
+            await asyncio.wait_for(coordinator._ensure_connected(), timeout=2)
