@@ -7,7 +7,6 @@ alias bug.
 
 from __future__ import annotations
 
-import os
 import sys
 import types
 from pathlib import Path
@@ -118,4 +117,4 @@ class TestBridgeSettingsEnvVars:
 
 
 # Need pytest import for the raises tests
-import pytest  # noqa: E402
+import pytest

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, HomeAssistantError, ServiceCall
 from homeassistant.helpers import device_registry as dr
@@ -27,6 +26,9 @@ from .const import (
 )
 from .coordinator import H7015Coordinator
 from .options_flow import H7015OptionsFlow
+
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -242,7 +244,7 @@ async def _handle_snapshot_scene(call: ServiceCall) -> None:
         bulb_entity_ids: dict[int, str] = {}  # bulb_index -> entity_id
 
         for ent in entry_entities:
-            if not ent.domain == "light":
+            if ent.domain != "light":
                 continue
             # Bulb entities have "_bulb_" in their unique_id
             if "_bulb_" in ent.unique_id:

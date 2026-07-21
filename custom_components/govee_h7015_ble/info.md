@@ -60,7 +60,7 @@ installing, go to Settings → Devices & Services → Add Integration.
 If your H7015 doesn't auto-discover:
 
 1. Make sure HA's Bluetooth integration is set up and the H7015 is in range.
-2. Use `python scan.py --name H7015` (from the standalone toolkit) to find
+2. Use `python standalone/scan.py --name H7015` (from the standalone toolkit) to find
    the MAC address.
 3. Add the integration manually and enter the MAC.
 

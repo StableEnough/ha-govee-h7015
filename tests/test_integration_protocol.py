@@ -17,14 +17,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "standalone"))
 
 import pytest
-
 from protocol import (  # type: ignore[import-not-found]
     Command,
-    Scene,
     decode_state,
     pkt_brightness,
-    pkt_power,
-    pkt_solid_color,
 )
 
 
@@ -47,8 +43,7 @@ class TestBrightnessRoundTrip:
         assert st.brightness is not None
         # Should be within 1 percentage point (rounding)
         assert abs(st.brightness - pct) <= 1, (
-            f"round-trip failed: sent {pct}%, raw=0x{raw_byte:02x}, "
-            f"decoded={st.brightness}%"
+            f"round-trip failed: sent {pct}%, raw=0x{raw_byte:02x}, decoded={st.brightness}%"
         )
 
     def test_brightness_zero_round_trip(self) -> None:
@@ -120,6 +115,7 @@ class TestStandaloneAndIntegrationInSync:
         if "protocol" in sys.modules:
             del sys.modules["protocol"]
         import protocol as standalone  # type: ignore[import-not-found]
+
         return standalone
 
     def test_power_packets_match(self) -> None:

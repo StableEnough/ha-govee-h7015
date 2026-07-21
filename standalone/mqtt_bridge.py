@@ -22,18 +22,20 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import signal
 import sys
 from pathlib import Path
-from typing import Any, Final
+from typing import Any
 
 try:
-    from aiomqtt import Client as AioMqttClient, MqttError
+    from aiomqtt import Client as AioMqttClient
+    from aiomqtt import MqttError
 except ImportError:
-    raise SystemExit("Please install aiomqtt:  pip install aiomqtt")
+    raise SystemExit("Please install aiomqtt:  pip install aiomqtt") from None
 
 try:
     from dotenv import load_dotenv
@@ -42,7 +44,8 @@ try:
 except ImportError:
     pass
 
-from govee_h7015 import GoveeH7015Client, GoveeError
+from govee_h7015 import GoveeError, GoveeH7015Client
+from govee_types import MacAddress
 from models import (
     BrightnessCommand,
     ColorCommand,
@@ -59,7 +62,6 @@ from models import (
 from protocol import H7015State, MusicMode, Scene
 from pydantic import AliasChoices, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from govee_types import MacAddress
 
 LOGGER = logging.getLogger("h7015_bridge")
 
@@ -95,8 +97,8 @@ class BridgeSettings(BaseSettings):
     @property
     def devices(self) -> list[DeviceConfig]:
         result: list[DeviceConfig] = []
-        for chunk in self.devices_raw.split(","):
-            chunk = chunk.strip()
+        for raw_chunk in self.devices_raw.split(","):
+            chunk = raw_chunk.strip()
             if not chunk:
                 continue
             if "=" in chunk:
@@ -173,9 +175,7 @@ class DeviceBridge:
 
     # --- MQTT publishing (all async via aiomqtt) -------------------------
     async def publish_discovery(self) -> None:
-        effects = [s.name.lower() for s in Scene] + [
-            f"music_{m.name.lower()}" for m in MusicMode
-        ]
+        effects = [s.name.lower() for s in Scene] + [f"music_{m.name.lower()}" for m in MusicMode]
         payload = HADiscovery(
             name=self.device.name,
             unique_id=f"govee_h7015_{self.mac_id}",
@@ -243,9 +243,7 @@ class DeviceBridge:
             LOGGER.warning("[%s] skipping publish of invalid state: %s", self.mac_id, exc)
             return
 
-        await self.mqtt.publish(
-            self.state_topic, validated.model_dump_json(), retain=True, qos=1
-        )
+        await self.mqtt.publish(self.state_topic, validated.model_dump_json(), retain=True, qos=1)
         await self.mqtt.publish(
             self.attributes_topic,
             json.dumps({"raw": state.raw.hex() if state.raw else None}),
@@ -257,9 +255,7 @@ class DeviceBridge:
     async def publish_cached_state(self) -> None:
         cached = self.state_cache.load().get(self.mac_id)
         if cached:
-            await self.mqtt.publish(
-                self.state_topic, json.dumps(cached), retain=True, qos=1
-            )
+            await self.mqtt.publish(self.state_topic, json.dumps(cached), retain=True, qos=1)
             LOGGER.info("[%s] restored cached state", self.mac_id)
 
     async def publish_availability(self, online: bool) -> None:
@@ -301,7 +297,13 @@ class DeviceBridge:
 
     async def _dispatch(
         self,
-        cmd: PowerCommand | BrightnessCommand | ColorCommand | SceneCommand | MusicCommand | SegmentCommand | WarmCommand,
+        cmd: PowerCommand
+        | BrightnessCommand
+        | ColorCommand
+        | SceneCommand
+        | MusicCommand
+        | SegmentCommand
+        | WarmCommand,
     ) -> None:
         """Type-safe dispatch using match + class patterns."""
         if self._client is None:
@@ -364,10 +366,8 @@ class DeviceBridge:
             finally:
                 await self.publish_availability(False)
                 if self._client:
-                    try:
+                    with contextlib.suppress(Exception):
                         await self._client.disconnect()
-                    except Exception:
-                        pass
                 self._client = None
             LOGGER.info("[%s] reconnecting in %ds", self.mac_id, backoff)
             await asyncio.sleep(backoff)
@@ -379,15 +379,11 @@ class DeviceBridge:
     async def stop(self) -> None:
         if self._task:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
         if self._client:
-            try:
+            with contextlib.suppress(Exception):
                 await self._client.disconnect()
-            except Exception:
-                pass
         await self.publish_availability(False)
 
 
@@ -544,9 +540,7 @@ async def main_async(args: argparse.Namespace) -> int:
 
     # Run the MQTT subscriber + all device bridges concurrently.
     # Using TaskGroup so any failure cancels all others cleanly.
-    subscriber_task = asyncio.create_task(
-        mqtt_subscriber(client, bridges, settings, stop_event)
-    )
+    subscriber_task = asyncio.create_task(mqtt_subscriber(client, bridges, settings, stop_event))
 
     await stop_event.wait()
 
@@ -559,7 +553,7 @@ async def main_async(args: argparse.Namespace) -> int:
     try:
         async with asyncio.timeout(10):
             await subscriber_task
-    except (asyncio.TimeoutError, asyncio.CancelledError):
+    except (TimeoutError, asyncio.CancelledError):
         pass
 
     return 0

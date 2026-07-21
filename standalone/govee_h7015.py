@@ -8,10 +8,10 @@ client that handles keepalive, reconnection, and state polling.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import logging
-from collections.abc import Awaitable, Callable
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 try:
     from bleak import BleakClient
@@ -25,13 +25,14 @@ from exceptions import (  # type: ignore[import-not-found]
     GoveeError,
     GoveeTimeoutError,
 )
+from govee_types import BulbIndex, MacAddress  # type: ignore[import-not-found]
 from protocol import (  # type: ignore[import-not-found]
-    H7015State,
     KEEPALIVE_INTERVAL,
-    MusicMode,
     READ_CHAR_UUID,
-    Scene,
     WRITE_CHAR_UUID,
+    H7015State,
+    MusicMode,
+    Scene,
     decode_state,
     pkt_brightness,
     pkt_color_temperature,
@@ -45,7 +46,9 @@ from protocol import (  # type: ignore[import-not-found]
     pkt_solid_color,
     pkt_warm_white,
 )
-from govee_types import BulbIndex, MacAddress  # type: ignore[import-not-found]
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 LOGGER = logging.getLogger("govee_h7015")
 
@@ -92,6 +95,11 @@ class GoveeH7015Client:
         return self._state
 
     @property
+    def is_connected(self) -> bool:
+        """Whether the underlying BLE client is currently connected."""
+        return self._client is not None and self._client.is_connected
+
+    @property
     def keepalive_running(self) -> bool:
         """Whether the keepalive task is currently running."""
         return self._keepalive_task is not None and not self._keepalive_task.done()
@@ -131,16 +139,12 @@ class GoveeH7015Client:
         self._intentional_disconnect = True
         if self._keepalive_task:
             self._keepalive_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._keepalive_task
-            except asyncio.CancelledError:
-                pass
             self._keepalive_task = None
         if self._client and self._client.is_connected:
-            try:
+            with contextlib.suppress(Exception):  # pragma: no cover
                 await self._client.disconnect()
-            except Exception:  # pragma: no cover
-                pass
         self._client = None
         self._intentional_disconnect = False
         LOGGER.info("Disconnected")
@@ -177,10 +181,8 @@ class GoveeH7015Client:
         self._client = None
         if self._keepalive_task and not self._keepalive_task.done():
             self._keepalive_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._keepalive_task
-            except asyncio.CancelledError:
-                pass
             self._keepalive_task = None
 
     async def _keepalive_loop(self) -> None:
@@ -221,9 +223,7 @@ class GoveeH7015Client:
             LOGGER.debug("TX %s", data.hex())
             try:
                 async with asyncio.timeout(BLE_OP_TIMEOUT):
-                    await self._client.write_gatt_char(
-                        WRITE_CHAR_UUID, data, response=response
-                    )
+                    await self._client.write_gatt_char(WRITE_CHAR_UUID, data, response=response)
             except TimeoutError as exc:
                 raise GoveeTimeoutError(f"write timed out after {BLE_OP_TIMEOUT}s") from exc
             except BleakError as exc:
@@ -252,26 +252,18 @@ class GoveeH7015Client:
 
     async def set_color(self, r: int, g: int, b: int) -> None:
         await self._write(pkt_solid_color(r, g, b))
-        self._state = dataclasses.replace(
-            self._state, rgb=(r, g, b), mode="manual"
-        )
+        self._state = dataclasses.replace(self._state, rgb=(r, g, b), mode="manual")
 
     async def set_warm_white(self) -> None:
         await self._write(pkt_warm_white())
 
     async def set_scene(self, scene: Scene) -> None:
         await self._write(pkt_scene(scene))
-        self._state = dataclasses.replace(
-            self._state, mode=f"scene:{scene.name.lower()}"
-        )
+        self._state = dataclasses.replace(self._state, mode=f"scene:{scene.name.lower()}")
 
-    async def set_music_mode(
-        self, mode: MusicMode, r: int = 0, g: int = 0, b: int = 0
-    ) -> None:
+    async def set_music_mode(self, mode: MusicMode, r: int = 0, g: int = 0, b: int = 0) -> None:
         await self._write(pkt_music(mode, r, g, b))
-        self._state = dataclasses.replace(
-            self._state, mode=f"music:{mode.name.lower()}"
-        )
+        self._state = dataclasses.replace(self._state, mode=f"music:{mode.name.lower()}")
 
     async def set_gradient(self, on: bool) -> None:
         await self._write(pkt_gradient(on))
@@ -279,16 +271,12 @@ class GoveeH7015Client:
     async def set_color_temperature(self, kelvin: int) -> None:
         """Set color temperature (warm/cold white) in Kelvin."""
         await self._write(pkt_color_temperature(kelvin))
-        self._state = dataclasses.replace(
-            self._state, mode=f"color_temp:{kelvin}"
-        )
+        self._state = dataclasses.replace(self._state, mode=f"color_temp:{kelvin}")
 
     async def set_segment(self, bulb: BulbIndex, r: int, g: int, b: int) -> None:
         await self._write(pkt_segment(bulb, r, g, b))
 
-    async def set_segments(
-        self, pairs: list[tuple[BulbIndex, int, int, int]]
-    ) -> None:
+    async def set_segments(self, pairs: list[tuple[BulbIndex, int, int, int]]) -> None:
         for pkt in pkt_multi_segment(pairs):
             await self._write(pkt)
             await asyncio.sleep(0.05)  # pacing

@@ -8,7 +8,7 @@ Provides:
 from __future__ import annotations
 
 import logging
-from typing import Any, Final, override
+from typing import TYPE_CHECKING, Any, Final, override
 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
@@ -19,17 +19,26 @@ from homeassistant.components.light import (
     LightEntity,
     LightEntityFeature,
 )
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_MAC, CONF_NAME, DOMAIN, EFFECTS
 from .coordinator import H7015Coordinator
 from .protocol import BULB_COUNT, MusicMode, Scene
 
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
 _LOGGER = logging.getLogger(__name__)
+
+# The H7015 only accepts one BLE connection at a time, and all 16 light
+# entities (main + 15 bulbs) share that single connection through the
+# coordinator. Cap HA's own concurrent service-call dispatch to 1 so calls
+# queue predictably instead of piling up behind the coordinator's internal
+# lock. See: https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/parallel-updates/
+PARALLEL_UPDATES = 1
 
 # Lookup tables for effect name -> enum
 SCENE_BY_NAME: Final = {s.name.lower(): s for s in Scene}
@@ -37,8 +46,8 @@ MUSIC_BY_NAME: Final = {m.name.lower(): m for m in MusicMode}
 
 # Color temperature range in Kelvin (HA's preferred unit since 2026.3).
 # H7015 supports 2000K (warm) to 6500K (cold).
-MIN_KELVIN = 2000   # warmest
-MAX_KELVIN = 6500   # coldest
+MIN_KELVIN = 2000  # warmest
+MAX_KELVIN = 6500  # coldest
 
 
 async def async_setup_entry(
@@ -54,8 +63,7 @@ async def async_setup_entry(
     # Add one light entity per bulb for individual control.
     # These are marked as EntityCategory.CONFIG so they don't clutter the
     # main device view but are still available for dashboards and scenes.
-    for bulb_index in range(BULB_COUNT):
-        entities.append(H7015BulbLight(coordinator, entry, bulb_index))
+    entities.extend(H7015BulbLight(coordinator, entry, i) for i in range(BULB_COUNT))
 
     async_add_entities(entities)
 
@@ -179,7 +187,7 @@ class H7015Light(CoordinatorEntity[H7015Coordinator], LightEntity):
 
     async def _apply_effect(self, effect: str) -> None:
         if effect.startswith("music_"):
-            mode_name = effect[len("music_"):]
+            mode_name = effect[len("music_") :]
             if mode_name in MUSIC_BY_NAME:
                 await self._coordinator.set_music_mode(MUSIC_BY_NAME[mode_name])
             else:
@@ -221,9 +229,7 @@ class H7015BulbLight(CoordinatorEntity[H7015Coordinator], LightEntity):
         # Display name is 1-indexed (Bulb 1, Bulb 2, ...) for user-friendliness
         self._attr_name = f"Bulb {bulb_index + 1}"
         # Unique ID uses 0-indexed (bulb_0, bulb_1, ...) for programmer-friendliness
-        self._attr_unique_id = (
-            f"{DOMAIN}_{self._mac.replace(':', '').lower()}_bulb_{bulb_index}"
-        )
+        self._attr_unique_id = f"{DOMAIN}_{self._mac.replace(':', '').lower()}_bulb_{bulb_index}"
         mac_id = self._mac.replace(":", "").upper()
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, mac_id)},
@@ -263,11 +269,8 @@ class H7015BulbLight(CoordinatorEntity[H7015Coordinator], LightEntity):
         if not self._coordinator.device_state.power:
             await self._coordinator.set_power(True)
 
-        if ATTR_RGB_COLOR in kwargs:
-            r, g, b = kwargs[ATTR_RGB_COLOR]
-        else:
-            # Default to white if no color specified
-            r, g, b = 255, 255, 255
+        # Default to white if no color specified
+        r, g, b = kwargs.get(ATTR_RGB_COLOR, (255, 255, 255))
 
         await self._coordinator.set_bulb(self._bulb_index, r, g, b)
         self.async_write_ha_state()

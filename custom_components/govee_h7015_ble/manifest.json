@@ -5,7 +5,7 @@
   "config_flow": true,
   "documentation": "https://github.com/StableEnough/ha-govee-h7015",
   "issue_tracker": "https://github.com/StableEnough/ha-govee-h7015/issues",
-  "iot_class": "local_push",
+  "iot_class": "local_polling",
   "loggers": ["govee_h7015_ble"],
   "requirements": ["bleak-retry-connector>=3.4"],
   "dependencies": ["bluetooth"],

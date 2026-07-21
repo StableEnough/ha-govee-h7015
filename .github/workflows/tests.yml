@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.13"]
     steps:
       - uses: actions/checkout@v4
 
@@ -27,8 +27,13 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
+      # test-ha (homeassistant + pytest-homeassistant-custom-component) and
+      # bridge (aiomqtt) are mutually exclusive extras — see pyproject.toml's
+      # [tool.uv].conflicts. The test suite never imports real aiomqtt
+      # (tests/test_mqtt_bridge.py and tests/test_settings.py stub it via
+      # sys.modules), so test-ha is the one we need here.
       - name: Install dependencies
-        run: uv sync --extra dev --extra analyze
+        run: uv sync --extra dev --extra test-ha --extra analyze
 
       - name: Lint with ruff
         run: uv run ruff check .

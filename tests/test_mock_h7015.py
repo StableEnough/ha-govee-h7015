@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -17,11 +16,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "standalone"))
 
-from custom_components.govee_h7015_ble.coordinator import H7015Coordinator  # noqa: E402
-from custom_components.govee_h7015_ble.protocol import H7015State  # noqa: E402
 
 # Import mock client
-from tests.mock_h7015 import MockH7015Client, build_mock_client  # noqa: E402
+from tests.mock_h7015 import MockH7015Client
 
 
 async def test_mock_client_connect_disconnect() -> None:
@@ -41,9 +38,7 @@ async def test_mock_client_power_on() -> None:
 
     # Write power-on packet: 33 01 01 00..00 33
     pkt = bytes([0x33, 0x01, 0x01]) + b"\x00" * 16 + bytes([0x33])
-    await client.write_gatt_char(
-        "00010203-0405-0607-0809-0a0b0c0d2b11", pkt, response=True
-    )
+    await client.write_gatt_char("00010203-0405-0607-0809-0a0b0c0d2b11", pkt, response=True)
 
     assert client.mock_power is True
 
@@ -54,9 +49,7 @@ async def test_mock_client_power_off() -> None:
     await client.connect()
 
     pkt = bytes([0x33, 0x01, 0x00]) + b"\x00" * 16 + bytes([0x32])
-    await client.write_gatt_char(
-        "00010203-0405-0607-0809-0a0b0c0d2b11", pkt, response=True
-    )
+    await client.write_gatt_char("00010203-0405-0607-0809-0a0b0c0d2b11", pkt, response=True)
 
     assert client.mock_power is False
 
@@ -74,9 +67,7 @@ async def test_mock_client_set_color() -> None:
         checksum ^= b
     pkt += bytes([checksum])
 
-    await client.write_gatt_char(
-        "00010203-0405-0607-0809-0a0b0c0d2b11", pkt, response=True
-    )
+    await client.write_gatt_char("00010203-0405-0607-0809-0a0b0c0d2b11", pkt, response=True)
 
     assert client.mock_rgb == (255, 0, 0)
 
@@ -88,9 +79,7 @@ async def test_mock_client_keepalive_ignored() -> None:
 
     # Keepalive: AA 01 00..00 AB
     pkt = bytes([0xAA, 0x01]) + b"\x00" * 17 + bytes([0xAB])
-    await client.write_gatt_char(
-        "00010203-0405-0607-0809-0a0b0c0d2b11", pkt, response=False
-    )
+    await client.write_gatt_char("00010203-0405-0607-0809-0a0b0c0d2b11", pkt, response=False)
 
     # State should be unchanged (power stays False from init)
     assert client.mock_power is False
@@ -104,14 +93,10 @@ async def test_mock_client_read_returns_state() -> None:
 
     # Set power on first
     pkt = bytes([0x33, 0x01, 0x01]) + b"\x00" * 16 + bytes([0x33])
-    await client.write_gatt_char(
-        "00010203-0405-0607-0809-0a0b0c0d2b11", pkt, response=True
-    )
+    await client.write_gatt_char("00010203-0405-0607-0809-0a0b0c0d2b11", pkt, response=True)
 
     # Read state
-    raw = await client.read_gatt_char(
-        "00010203-0405-0607-0809-0a0b0c0d2b10"
-    )
+    raw = await client.read_gatt_char("00010203-0405-0607-0809-0a0b0c0d2b10")
 
     assert len(raw) == 20
     assert raw[0] == 0x33  # command prefix
@@ -127,9 +112,7 @@ async def test_mock_client_write_count() -> None:
     # Write 3 packets
     for _ in range(3):
         pkt = bytes([0xAA, 0x01]) + b"\x00" * 17 + bytes([0xAB])
-        await client.write_gatt_char(
-            "00010203-0405-0607-0809-0a0b0c0d2b11", pkt, response=False
-        )
+        await client.write_gatt_char("00010203-0405-0607-0809-0a0b0c0d2b11", pkt, response=False)
 
     assert client.mock_write_count == 3
 

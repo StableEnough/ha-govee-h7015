@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "standalone"))
 
 import pytest
-
 from protocol import (  # type: ignore[import-not-found]
+    PACKET_LEN,
     ColorMode,
     Command,
     MusicMode,
@@ -33,9 +33,7 @@ from protocol import (  # type: ignore[import-not-found]
     pkt_scene,
     pkt_segment,
     pkt_solid_color,
-    PACKET_LEN,
 )
-from protocol import H7015State  # type: ignore[import-not-found]
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +221,7 @@ class TestSegments:
 
     def test_segment_out_of_range_raises(self) -> None:
         from exceptions import GoveeInvalidArgumentError  # type: ignore[import-not-found]
+
         with pytest.raises(GoveeInvalidArgumentError):
             pkt_segment(15, 0, 0, 0)
         with pytest.raises(GoveeInvalidArgumentError):
@@ -293,7 +292,8 @@ class TestDIYMode:
 
     def test_diy_basic_fade(self) -> None:
         """DIY fade with 2 colors should produce start + 1 data + end + activate."""
-        from protocol import pkt_diy, DIYStyle, DIYStyleMode  # type: ignore[import-not-found]
+        from protocol import DIYStyle, DIYStyleMode, pkt_diy  # type: ignore[import-not-found]
+
         packets = pkt_diy(
             name=0x3B,
             style=DIYStyle.FADE,
@@ -326,7 +326,8 @@ class TestDIYMode:
 
     def test_diy_all_packets_20_bytes(self) -> None:
         """Every DIY packet must be exactly 20 bytes."""
-        from protocol import pkt_diy, DIYStyle, DIYStyleMode  # type: ignore[import-not-found]
+        from protocol import DIYStyle, DIYStyleMode, pkt_diy  # type: ignore[import-not-found]
+
         packets = pkt_diy(
             name=0x3B,
             style=DIYStyle.JUMPING,
@@ -339,8 +340,9 @@ class TestDIYMode:
 
     def test_diy_speed_validated(self) -> None:
         """Speed out of range should raise."""
-        from protocol import pkt_diy, DIYStyle, DIYStyleMode  # type: ignore[import-not-found]
         from exceptions import GoveeInvalidArgumentError  # type: ignore[import-not-found]
+        from protocol import DIYStyle, DIYStyleMode, pkt_diy  # type: ignore[import-not-found]
+
         with pytest.raises(GoveeInvalidArgumentError):
             pkt_diy(0x3B, DIYStyle.FADE, DIYStyleMode.WHOLE, 150, [(255, 0, 0)])
         with pytest.raises(GoveeInvalidArgumentError):
@@ -348,24 +350,30 @@ class TestDIYMode:
 
     def test_diy_no_colors_raises(self) -> None:
         """Empty color list should raise."""
-        from protocol import pkt_diy, DIYStyle, DIYStyleMode  # type: ignore[import-not-found]
         from exceptions import GoveeInvalidArgumentError  # type: ignore[import-not-found]
+        from protocol import DIYStyle, DIYStyleMode, pkt_diy  # type: ignore[import-not-found]
+
         with pytest.raises(GoveeInvalidArgumentError):
             pkt_diy(0x3B, DIYStyle.FADE, DIYStyleMode.WHOLE, 50, [])
 
     def test_diy_too_many_colors_raises(self) -> None:
         """More than 8 colors should raise."""
-        from protocol import pkt_diy, DIYStyle, DIYStyleMode  # type: ignore[import-not-found]
         from exceptions import GoveeInvalidArgumentError  # type: ignore[import-not-found]
+        from protocol import DIYStyle, DIYStyleMode, pkt_diy  # type: ignore[import-not-found]
+
         with pytest.raises(GoveeInvalidArgumentError):
             pkt_diy(
-                0x3B, DIYStyle.FADE, DIYStyleMode.WHOLE, 50,
+                0x3B,
+                DIYStyle.FADE,
+                DIYStyleMode.WHOLE,
+                50,
                 [(i, i, i) for i in range(9)],
             )
 
     def test_diy_combo_adds_extra_packet(self) -> None:
         """Combo style should produce an extra data packet."""
-        from protocol import pkt_diy, DIYStyle, DIYStyleMode  # type: ignore[import-not-found]
+        from protocol import DIYStyle, DIYStyleMode, pkt_diy  # type: ignore[import-not-found]
+
         packets = pkt_diy(
             name=0x3B,
             style=DIYStyle.COMBO,

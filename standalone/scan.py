@@ -21,7 +21,7 @@ import re
 try:
     from bleak import BleakScanner
 except ImportError:
-    raise SystemExit("Please install bleak:  pip install bleak")
+    raise SystemExit("Please install bleak:  pip install bleak") from None
 
 
 def looks_like_govee(name: str | None) -> bool:
@@ -39,9 +39,7 @@ async def main() -> None:
     parser.add_argument(
         "--timeout", type=int, default=10, help="Scan duration in seconds (default 10)"
     )
-    parser.add_argument(
-        "--all", action="store_true", help="Show all BLE devices, not just Govee"
-    )
+    parser.add_argument("--all", action="store_true", help="Show all BLE devices, not just Govee")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 

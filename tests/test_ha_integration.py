@@ -7,7 +7,6 @@ integration code: config flow, light entity, service registration.
 from __future__ import annotations
 
 import sys
-from collections.abc import AsyncGenerator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,19 +19,16 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "standalone"))
 
 # Import at module level so collection fails fast if paths are wrong
-from custom_components.govee_h7015_ble import (  # noqa: E402
-    async_setup_entry,
-    async_unload_entry,
-)
-from custom_components.govee_h7015_ble import config_flow as govee_config_flow  # noqa: E402
-from custom_components.govee_h7015_ble.const import DOMAIN  # noqa: E402
-from custom_components.govee_h7015_ble.coordinator import H7015Coordinator  # noqa: E402
-from custom_components.govee_h7015_ble.protocol import H7015State  # noqa: E402
-from homeassistant.config_entries import ConfigEntry  # noqa: E402
+from homeassistant.config_entries import ConfigEntry
+
+from custom_components.govee_h7015_ble.const import DOMAIN
+from custom_components.govee_h7015_ble.coordinator import H7015Coordinator
+from custom_components.govee_h7015_ble.protocol import H7015State
 
 # Use the test framework's MockConfigEntry if available
 try:
     from pytest_homeassistant_custom_component.common import MockConfigEntry
+
     USE_MOCK_ENTRY = True
 except ImportError:
     USE_MOCK_ENTRY = False
@@ -168,8 +164,10 @@ async def test_setup_entry_creates_light(hass) -> None:  # type: ignore[no-untyp
     async def mock_update(self):  # type: ignore[no-untyped-def]
         return H7015State(power=True, brightness=50, rgb=(255, 0, 0))
 
-    with patch.object(H7015Coordinator, "_async_update_data", mock_update), \
-         patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()):
+    with (
+        patch.object(H7015Coordinator, "_async_update_data", mock_update),
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()),
+    ):
         # Use HA's async_setup_entry through the proper entry setup path
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
@@ -191,8 +189,10 @@ async def test_unload_entry_cleans_up(hass) -> None:  # type: ignore[no-untyped-
     async def mock_update(self):  # type: ignore[no-untyped-def]
         return H7015State()
 
-    with patch.object(H7015Coordinator, "_async_update_data", mock_update), \
-         patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()):
+    with (
+        patch.object(H7015Coordinator, "_async_update_data", mock_update),
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()),
+    ):
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         assert entry.entry_id in hass.data[DOMAIN]
@@ -214,9 +214,11 @@ async def test_set_bulb_service_routes_to_coordinator(hass) -> None:  # type: ig
     async def mock_update(self):  # type: ignore[no-untyped-def]
         return H7015State()
 
-    with patch.object(H7015Coordinator, "_async_update_data", mock_update), \
-         patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()), \
-         patch.object(H7015Coordinator, "set_bulb", new=AsyncMock()) as mock_set_bulb:
+    with (
+        patch.object(H7015Coordinator, "_async_update_data", mock_update),
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()),
+        patch.object(H7015Coordinator, "set_bulb", new=AsyncMock()) as mock_set_bulb,
+    ):
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -224,6 +226,7 @@ async def test_set_bulb_service_routes_to_coordinator(hass) -> None:  # type: ig
         # a device in the device registry that maps to our coordinator,
         # then pass its device_id as the target.
         from homeassistant.helpers import device_registry as dr
+
         dev_reg = dr.async_get(hass)
         device = dev_reg.async_get_or_create(
             config_entry_id=entry.entry_id,
@@ -251,9 +254,11 @@ async def test_set_bulb_service_requires_target(hass) -> None:  # type: ignore[n
     async def mock_update(self):  # type: ignore[no-untyped-def]
         return H7015State()
 
-    with patch.object(H7015Coordinator, "_async_update_data", mock_update), \
-         patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()), \
-         patch.object(H7015Coordinator, "set_bulb", new=AsyncMock()) as mock_set_bulb:
+    with (
+        patch.object(H7015Coordinator, "_async_update_data", mock_update),
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()),
+        patch.object(H7015Coordinator, "set_bulb", new=AsyncMock()) as mock_set_bulb,
+    ):
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -280,8 +285,10 @@ async def test_per_bulb_entities_created(hass) -> None:  # type: ignore[no-untyp
     async def mock_update(self):  # type: ignore[no-untyped-def]
         return H7015State(power=True, brightness=50)
 
-    with patch.object(H7015Coordinator, "_async_update_data", mock_update), \
-         patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()):
+    with (
+        patch.object(H7015Coordinator, "_async_update_data", mock_update),
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()),
+    ):
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -304,9 +311,11 @@ async def test_per_bulb_entity_turn_on_sets_color(hass) -> None:  # type: ignore
     async def mock_update(self):  # type: ignore[no-untyped-def]
         return H7015State(power=True)
 
-    with patch.object(H7015Coordinator, "_async_update_data", mock_update), \
-         patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()), \
-         patch.object(H7015Coordinator, "set_bulb", new=AsyncMock()) as mock_set_bulb:
+    with (
+        patch.object(H7015Coordinator, "_async_update_data", mock_update),
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()),
+        patch.object(H7015Coordinator, "set_bulb", new=AsyncMock()) as mock_set_bulb,
+    ):
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -335,8 +344,10 @@ async def test_coordinator_tracks_bulb_colors(hass) -> None:  # type: ignore[no-
     async def mock_update(self):  # type: ignore[no-untyped-def]
         return H7015State(power=True)
 
-    with patch.object(H7015Coordinator, "_async_update_data", mock_update), \
-         patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()):
+    with (
+        patch.object(H7015Coordinator, "_async_update_data", mock_update),
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()),
+    ):
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -369,8 +380,10 @@ async def test_snapshot_scene_service(hass) -> None:  # type: ignore[no-untyped-
     async def mock_update(self):  # type: ignore[no-untyped-def]
         return H7015State(power=True)
 
-    with patch.object(H7015Coordinator, "_async_update_data", mock_update), \
-         patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()):
+    with (
+        patch.object(H7015Coordinator, "_async_update_data", mock_update),
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()),
+    ):
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -382,6 +395,7 @@ async def test_snapshot_scene_service(hass) -> None:  # type: ignore[no-untyped-
 
         # Register a device in the device registry
         from homeassistant.helpers import device_registry as dr
+
         dev_reg = dr.async_get(hass)
         device = dev_reg.async_get_or_create(
             config_entry_id=entry.entry_id,

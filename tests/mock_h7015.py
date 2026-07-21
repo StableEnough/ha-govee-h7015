@@ -56,9 +56,7 @@ class MockH7015Client:
         _LOGGER.debug("MockH7015: disconnect()")
         self._connected = False
 
-    async def write_gatt_char(
-        self, char_uuid: str, data: bytes, *, response: bool = True
-    ) -> None:
+    async def write_gatt_char(self, char_uuid: str, data: bytes, *, response: bool = True) -> None:
         """Process a write just like the real H7015 would."""
         if not self._connected:
             raise ConnectionError("not connected")

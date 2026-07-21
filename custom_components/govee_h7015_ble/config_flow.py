@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Final, override
+from typing import TYPE_CHECKING, Any, Final, override
 
 import voluptuous as vol
-from homeassistant import config_entries
-from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
     async_discovered_service_info,
 )
 from homeassistant.const import CONF_MAC, CONF_NAME
 
-from .const import DEFAULT_NAME, DOMAIN, SERVICE_UUID
+from homeassistant import config_entries
+
+from .const import DEFAULT_NAME, DOMAIN
+
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigFlowResult
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,9 +36,7 @@ def _is_h7015(service_info: BluetoothServiceInfoBleak) -> bool:
     H7015 protocol may not work correctly on other models.
     """
     name = (service_info.name or "").upper()
-    if name.startswith("H7015"):
-        return True
-    return False
+    return name.startswith("H7015")
 
 
 def _normalize_mac(mac: str) -> str:
@@ -81,9 +82,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Confirm discovery."""
         address = self.unique_id or ""
-        name = (
-            self._discovered[address].name if address in self._discovered else DEFAULT_NAME
-        )
+        name = self._discovered[address].name if address in self._discovered else DEFAULT_NAME
         if user_input is not None:
             return self.async_create_entry(
                 title=name,
@@ -95,9 +94,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     @override
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Manual setup when no discovery happened."""
         errors: dict[str, str] = {}
 
@@ -125,9 +122,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._discovered[service_info.address] = service_info
 
         if self._discovered and not errors:
-            choices = {
-                addr: f"{info.name} ({addr})" for addr, info in self._discovered.items()
-            }
+            choices = {addr: f"{info.name} ({addr})" for addr, info in self._discovered.items()}
             data_schema = vol.Schema(
                 {
                     vol.Required(CONF_MAC): vol.In(choices),
@@ -141,9 +136,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
                 }
             )
-        return self.async_show_form(
-            step_id="user", data_schema=data_schema, errors=errors
-        )
+        return self.async_show_form(step_id="user", data_schema=data_schema, errors=errors)
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -161,10 +154,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except ValueError:
                 errors[CONF_MAC] = "invalid_mac"
             else:
+                await self.async_set_unique_id(mac, raise_on_progress=False)
                 self._abort_if_unique_id_configured()
                 return self.async_update_reload_and_abort(
                     self._get_reconfigure_entry(),
-                    data_updates={CONF_MAC: mac, CONF_NAME: user_input.get(CONF_NAME, DEFAULT_NAME)},
+                    data_updates={
+                        CONF_MAC: mac,
+                        CONF_NAME: user_input.get(CONF_NAME, DEFAULT_NAME),
+                    },
                 )
 
         data_schema = vol.Schema(
@@ -173,6 +170,4 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
             }
         )
-        return self.async_show_form(
-            step_id="reconfigure", data_schema=data_schema, errors=errors
-        )
+        return self.async_show_form(step_id="reconfigure", data_schema=data_schema, errors=errors)

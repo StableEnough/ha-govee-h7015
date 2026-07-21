@@ -35,8 +35,6 @@ if "dotenv" not in sys.modules:
     sys.modules["dotenv"] = dotenv
 
 import pytest
-from pydantic import ValidationError
-
 from models import (
     BrightnessCommand,
     ColorCommand,
@@ -49,6 +47,7 @@ from models import (
     SegmentCommand,
     parse_command,
 )
+from pydantic import ValidationError
 
 
 class TestParseCommand:
@@ -84,9 +83,7 @@ class TestParseCommand:
         assert cmd.brightness is None
 
     def test_color_with_brightness(self) -> None:
-        cmd = self._parse(
-            {"color": {"r": 100, "g": 200, "b": 50}, "brightness": 128}
-        )
+        cmd = self._parse({"color": {"r": 100, "g": 200, "b": 50}, "brightness": 128})
         assert isinstance(cmd, ColorCommand)
         assert (cmd.r, cmd.g, cmd.b) == (100, 200, 50)
         assert cmd.brightness == 50

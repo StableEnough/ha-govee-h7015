@@ -10,11 +10,12 @@ that handle transient BlueZ errors automatically.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from typing import Any, Final, override
+from typing import TYPE_CHECKING, Any, Final, override
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -24,12 +25,12 @@ from .exceptions import (
     GoveeError,
 )
 from .protocol import (
-    H7015State,
     KEEPALIVE_INTERVAL,
-    MusicMode,
     READ_CHAR_UUID,
-    Scene,
     WRITE_CHAR_UUID,
+    H7015State,
+    MusicMode,
+    Scene,
     decode_state,
     pkt_brightness,
     pkt_color_temperature,
@@ -41,7 +42,9 @@ from .protocol import (
     pkt_segment,
     pkt_solid_color,
 )
-from .govee_types import BleClient, BulbIndex, MacAddress, RGB
+
+if TYPE_CHECKING:
+    from .govee_types import RGB, BleClient, BulbIndex, MacAddress
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -119,10 +122,7 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
     @property
     def keepalive_running(self) -> bool:
         """Whether the keepalive task is currently running."""
-        return (
-            self._keepalive_task is not None
-            and not self._keepalive_task.done()
-        )
+        return self._keepalive_task is not None and not self._keepalive_task.done()
 
     def get_bulb_color(self, bulb: int) -> RGB | None:
         """Get the last-commanded color for a specific bulb."""
@@ -158,9 +158,7 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
             if ble_device is None:
                 # Use HA's reachability diagnostics for a human-readable reason
                 reason = await self._get_reachability_reason()
-                raise UpdateFailed(
-                    f"H7015 {self.mac} not discovered via HA Bluetooth: {reason}"
-                )
+                raise UpdateFailed(f"H7015 {self.mac} not discovered via HA Bluetooth: {reason}")
 
             client = await self._build_client(ble_device)
             try:
@@ -196,12 +194,11 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         See: https://developers.home-assistant.io/docs/bluetooth
         """
         try:
-            from bleak_retry_connector import establish_connection
             from bleak import BleakClient
+            from bleak_retry_connector import establish_connection
         except ImportError as exc:
             raise UpdateFailed(
-                "bleak-retry-connector not installed. "
-                "Run: pip install bleak-retry-connector"
+                "bleak-retry-connector not installed. Run: pip install bleak-retry-connector"
             ) from exc
 
         # establish_connection returns a BleakClient that's already connected,
@@ -219,17 +216,13 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         """Cancel keepalive and disconnect any stale client."""
         if self._keepalive_task and not self._keepalive_task.done():
             self._keepalive_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._keepalive_task
-            except asyncio.CancelledError:
-                pass
             self._keepalive_task = None
         if self._client:
-            try:
+            with contextlib.suppress(Exception):  # pragma: no cover — best-effort cleanup
                 if self._client.is_connected:
                     await self._client.disconnect()
-            except Exception:  # pragma: no cover — best-effort cleanup
-                pass
             self._client = None
 
     async def _keepalive_loop(self) -> None:
@@ -272,9 +265,7 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
             _LOGGER.debug("TX %s", packet.hex())
             try:
                 async with asyncio.timeout(BLE_OP_TIMEOUT):
-                    await client.write_gatt_char(
-                        WRITE_CHAR_UUID, packet, response=True
-                    )
+                    await client.write_gatt_char(WRITE_CHAR_UUID, packet, response=True)
             except TimeoutError as exc:
                 raise UpdateFailed(f"write timed out: {exc}") from exc
             except Exception as exc:
@@ -297,9 +288,7 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         await self._send(pkt_scene(scene))
         self._update_state(mode=f"scene:{scene.name.lower()}")
 
-    async def set_music_mode(
-        self, mode: MusicMode, r: int = 0, g: int = 0, b: int = 0
-    ) -> None:
+    async def set_music_mode(self, mode: MusicMode, r: int = 0, g: int = 0, b: int = 0) -> None:
         await self._send(pkt_music(mode, r, g, b))
         self._update_state(mode=f"music:{mode.name.lower()}")
 
@@ -344,9 +333,7 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
             # doesn't report mode (scene/music/color_temp), so we keep the
             # last-commanded mode to avoid wiping effect/color_temp state.
             decoded = decode_state(raw)
-            self._device_state = dataclasses.replace(
-                decoded, mode=self._device_state.mode
-            )
+            self._device_state = dataclasses.replace(decoded, mode=self._device_state.mode)
             if self.data is not None:
                 self.data = dataclasses.replace(
                     self.data,
@@ -359,6 +346,7 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
             self._consecutive_failures = 0
             if self._repair_issue_created:
                 from .repairs import delete_unreachable_issue
+
                 delete_unreachable_issue(self.hass, self._config_entry)
                 self._repair_issue_created = False
         except TimeoutError as exc:
@@ -383,6 +371,7 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         self._consecutive_failures += 1
         if self._consecutive_failures >= 3 and not self._repair_issue_created:
             from .repairs import create_unreachable_issue
+
             create_unreachable_issue(self.hass, self._config_entry)
             self._repair_issue_created = True
 
@@ -402,4 +391,4 @@ async def _default_ble_device_lookup(
 
 
 # Re-export for type-checkers
-__all__ = ["H7015Coordinator", "BleDeviceLookup", "BLE_OP_TIMEOUT"]
+__all__ = ["BLE_OP_TIMEOUT", "BleDeviceLookup", "H7015Coordinator"]

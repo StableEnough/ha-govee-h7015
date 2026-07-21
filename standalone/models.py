@@ -96,7 +96,9 @@ class HANativePayload(BaseModel):
     color: HAColor | None = None
     effect: str | None = None
 
-    def to_command(self) -> PowerCommand | BrightnessCommand | ColorCommand | SceneCommand | MusicCommand | None:
+    def to_command(
+        self,
+    ) -> PowerCommand | BrightnessCommand | ColorCommand | SceneCommand | MusicCommand | None:
         """Normalize HA's native payload to one of our explicit commands.
 
         Returns None if the payload is empty (no actionable fields).
@@ -105,7 +107,7 @@ class HANativePayload(BaseModel):
         if self.effect is not None:
             name = self.effect
             if name.startswith("music_"):
-                return MusicCommand(name=name[len("music_"):])
+                return MusicCommand(name=name[len("music_") :])
             return SceneCommand(name=name)
 
         # Color command (optionally with brightness)
@@ -115,9 +117,7 @@ class HANativePayload(BaseModel):
                 g=self.color.g,
                 b=self.color.b,
                 brightness=(
-                    int(self.brightness * 100 / 255)
-                    if self.brightness is not None
-                    else None
+                    int(self.brightness * 100 / 255) if self.brightness is not None else None
                 ),
             )
 
@@ -202,7 +202,15 @@ class HADiscovery(BaseModel):
 # Parsing entry point
 # ---------------------------------------------------------------------------
 # Union of all explicit command types (for type annotations)
-type Command = PowerCommand | BrightnessCommand | ColorCommand | SceneCommand | MusicCommand | WarmCommand | SegmentCommand
+type Command = (
+    PowerCommand
+    | BrightnessCommand
+    | ColorCommand
+    | SceneCommand
+    | MusicCommand
+    | WarmCommand
+    | SegmentCommand
+)
 
 
 def parse_command(payload: bytes) -> Command | None:
@@ -245,18 +253,18 @@ def parse_command(payload: bytes) -> Command | None:
 
 
 __all__ = [
-    "HAColor",
-    "PowerCommand",
     "BrightnessCommand",
     "ColorCommand",
-    "SceneCommand",
-    "MusicCommand",
-    "WarmCommand",
-    "SegmentCommand",
-    "HANativePayload",
     "Command",
-    "DeviceState",
     "DeviceConfig",
+    "DeviceState",
+    "HAColor",
     "HADiscovery",
+    "HANativePayload",
+    "MusicCommand",
+    "PowerCommand",
+    "SceneCommand",
+    "SegmentCommand",
+    "WarmCommand",
     "parse_command",
 ]

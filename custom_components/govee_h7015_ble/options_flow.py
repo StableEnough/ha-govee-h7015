@@ -6,7 +6,7 @@ re-adding the integration.
 
 from __future__ import annotations
 
-from typing import Any, override
+from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigFlowResult, OptionsFlow
@@ -18,13 +18,9 @@ from .const import CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
 class H7015OptionsFlow(OptionsFlow):
     """Options flow for Govee H7015 BLE."""
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Manage the options."""
-        current_interval = self.config_entry.options.get(
-            CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
-        )
+        current_interval = self.config_entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
 
         if user_input is not None:
             return self.async_create_entry(

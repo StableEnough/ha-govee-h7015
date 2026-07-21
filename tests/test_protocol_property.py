@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -23,19 +23,15 @@ from protocol import (  # type: ignore[import-not-found]
     PACKET_LEN,
     Scene,
     brightness_to_raw,
-    build_packet,
     checksum,
     decode_state,
     pkt_brightness,
-    pkt_music,
-    pkt_power,
     pkt_scene,
     pkt_segment,
     pkt_solid_color,
     raw_to_brightness,
     validate_packet,
 )
-
 
 # ---------------------------------------------------------------------------
 # Strategies
@@ -63,17 +59,14 @@ class TestPacketInvariants:
         assert len(pkt_solid_color(*rgb)) == PACKET_LEN
 
     @given(st_bulb, st_rgb)
-    def test_segment_packet_always_20_bytes(
-        self, bulb: int, rgb: tuple[int, int, int]
-    ) -> None:
+    def test_segment_packet_always_20_bytes(self, bulb: int, rgb: tuple[int, int, int]) -> None:
         assert len(pkt_segment(bulb, *rgb)) == PACKET_LEN
 
     @given(st.lists(st_rgb, min_size=1, max_size=15))
-    def test_multi_segment_packets_each_20_bytes(
-        self, colors: list[tuple[int, int, int]]
-    ) -> None:
+    def test_multi_segment_packets_each_20_bytes(self, colors: list[tuple[int, int, int]]) -> None:
         pairs = [(i, *c) for i, c in enumerate(colors)]
         from protocol import pkt_multi_segment  # type: ignore[import-not-found]
+
         for pkt in pkt_multi_segment(pairs):
             assert len(pkt) == PACKET_LEN
 
@@ -140,9 +133,7 @@ class TestDecodeStateRobustness:
         assert st.raw == raw if raw else st.raw in (None, raw)
 
     @given(st_byte, st_byte, st_byte)
-    def test_power_decode_when_prefix_matches(
-        self, cmd: int, val: int, _: int
-    ) -> None:
+    def test_power_decode_when_prefix_matches(self, cmd: int, val: int, _: int) -> None:
         """If byte 0 is 0x33 and byte 1 is 0x01 (POWER), power should decode."""
         raw = bytes([0x33, 0x01, val]) + b"\x00" * 17
         st = decode_state(raw)

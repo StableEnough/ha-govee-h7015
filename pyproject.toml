@@ -7,7 +7,7 @@ license = { text = "GPL-3.0-or-later" }
 authors = [
     { name = "Govee H7015 Reverse Engineering Community" },
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 keywords = ["govee", "h7015", "home-assistant", "ble", "bluetooth", "iot", "smart-home"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -22,23 +22,39 @@ classifiers = [
 dependencies = [
     "bleak>=0.22",
     "bleak-retry-connector>=3.4",
-    "aiomqtt>=2.3",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
 ]
 
 [project.optional-dependencies]
+# Only needed to actually run the standalone MQTT bridge (Path B). Pulls in
+# paho-mqtt>=2.1, which conflicts with pytest-homeassistant-custom-component's
+# paho-mqtt==1.6.1 pin below — never install this alongside test-ha. The test
+# suite doesn't need it: tests/test_mqtt_bridge.py and tests/test_settings.py
+# stub aiomqtt via sys.modules.
+bridge = ["aiomqtt>=2.3"]
 analyze = ["pyshark>=0.6"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
-    "pytest-homeassistant-custom-component>=0.13",
     "hypothesis>=6.100",
     "ruff>=0.6",
     "mypy>=1.11",
-    "homeassistant>=2024.8",
     "pre-commit>=3.7",
     "pyserial>=3.5",
+]
+# Needed to run tests/test_ha_integration.py, tests/test_tdd_loops.py, and
+# anything importing custom_components (which pulls in homeassistant.*).
+# See the "bridge" extra above for why this can't be installed with it.
+test-ha = [
+    "pytest-homeassistant-custom-component>=0.13",
+    "homeassistant>=2024.8",
+    # Not pulled in automatically: HA installs component requirements like
+    # this at runtime from each component's manifest.json, but pip/uv only
+    # sees homeassistant's own top-level deps. homeassistant.components.usb
+    # (imported transitively via homeassistant.components.bluetooth, which
+    # our config_flow.py uses) needs this.
+    "aiousbwatcher>=1.1.1",
 ]
 
 [project.urls]
@@ -53,6 +69,14 @@ govee-h7015-probe = "standalone.probe:main"
 govee-h7015-bridge = "standalone.mqtt_bridge:main"
 govee-h7015-analyze = "standalone.analyze_hci:main"
 
+[tool.uv]
+conflicts = [
+    [
+        { extra = "bridge" },
+        { extra = "test-ha" },
+    ],
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -62,7 +86,7 @@ packages = ["standalone"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = [
@@ -87,13 +111,30 @@ ignore = [
     "PLR0913",   # too many args (fine for this codebase)
     "S101",      # assert in tests is fine
     "PLR2004",   # magic values in tests are fine
+    "PLC0415",   # deferred imports are intentional: lazy bleak/circular-import
+                 # avoidance in coordinator.py/__init__.py, test isolation elsewhere
+    "ASYNC109",  # async funcs with a `timeout: float` param mirror bleak's own API
+    "ASYNC240",  # Path.exists() at CLI startup, not inside a hot async loop
+    "RUF012",    # _attr_* class-level sets are HA's own convention (LightEntity
+                 # declares them as plain instance attrs, not ClassVar — annotating
+                 # ClassVar here breaks mypy's override check against the base class)
+    "PLR0911",   # too-many-return-statements: state/packet parsers have one
+    "PLR0912",   #   early-return/branch per case; splitting them up would hurt
+                 #   readability more than it helps (same judgment as PLR0913 above)
 ]
 
 [tool.ruff.format]
 quote-style = "double"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "PLR2004", "S106"]
+# S105/S106: literal "secret"/password strings in test fixtures and assertions,
+# not real credentials. S102: dynamic module loading via exec() in
+# test_integration_protocol.py, not untrusted input. E402: tests do
+# sys.path.insert(...) before their imports so custom_components/standalone
+# are importable without a src layout.
+"tests/**" = ["S101", "PLR2004", "S105", "S106", "S102", "E402", "SIM105", "S110", "PT019"]
+# PT019: Hypothesis's @given() passes extra positional args that ruff
+# mistakes for unused pytest fixtures — not actually fixtures.
 "standalone/probe.py" = ["S106"]  # passwords in CLI examples
 
 [tool.pytest.ini_options]
@@ -102,7 +143,7 @@ asyncio_mode = "auto"
 addopts = ["--strict-markers", "--strict-config"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 strict = true
 warn_unreachable = true
 warn_redundant_casts = true

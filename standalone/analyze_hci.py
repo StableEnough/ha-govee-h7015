@@ -38,7 +38,7 @@ import json
 import logging
 import sys
 from collections import Counter
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 try:
@@ -50,29 +50,29 @@ except ImportError:
         "You also need tshark installed system-wide:\n"
         "  Debian/Ubuntu: sudo apt install tshark\n"
         "  macOS: brew install --cask wireshark\n"
-    )
+    ) from None
 
 
 LOGGER = logging.getLogger("analyze_hci")
 
 GOVEE_PREFIXES = (0x33, 0xAA, 0xA1)
-WRITE_OPCODE = 0x52   # Write Request
-READ_OPCODE = 0x0A    # Read Request
+WRITE_OPCODE = 0x52  # Write Request
+READ_OPCODE = 0x0A  # Read Request
 NOTIFY_OPCODE = 0x1B  # Handle-Value Notification
 
 
 @dataclass
 class GoveePacket:
     timestamp: str
-    direction: str               # "tx" (phone -> device) or "rx"
+    direction: str  # "tx" (phone -> device) or "rx"
     src: str
     dst: str
     handle: str | None
     opcode: str | None
     data_hex: str
     data_bytes: list[int]
-    kind: str                    # "write", "read", "notify", "other"
-    govee_kind: str | None       # "command", "keepalive", "diy", None
+    kind: str  # "write", "read", "notify", "other"
+    govee_kind: str | None  # "command", "keepalive", "diy", None
 
 
 def classify_govee(data: bytes) -> str | None:
@@ -120,13 +120,23 @@ def cmd_label(data: bytes) -> str:
         if sub == 0x02 and len(data) >= 6:
             label += f" rgb({data[3]},{data[4]},{data[5]})"
         elif sub == 0x0B and len(data) >= 8:
-            label += f" rgb({data[3]},{data[4]},{data[5]}) left=0x{data[6]:02x} right=0x{data[7]:02x}"
+            label += (
+                f" rgb({data[3]},{data[4]},{data[5]}) left=0x{data[6]:02x} right=0x{data[7]:02x}"
+            )
         elif sub == 0x04 and len(data) >= 4:
             scenes = {
-                0x00: "sunrise", 0x01: "sunset", 0x04: "movie", 0x05: "dating",
-                0x07: "romantic", 0x08: "twinkle", 0x09: "candlelight",
-                0x0F: "snowflake", 0x10: "energetic", 0x0A: "breathe",
-                0x14: "crossing", 0x15: "rainbow",
+                0x00: "sunrise",
+                0x01: "sunset",
+                0x04: "movie",
+                0x05: "dating",
+                0x07: "romantic",
+                0x08: "twinkle",
+                0x09: "candlelight",
+                0x0F: "snowflake",
+                0x10: "energetic",
+                0x0A: "breathe",
+                0x14: "crossing",
+                0x15: "rainbow",
             }
             label += f":{scenes.get(data[3], f'0x{data[3]:02x}')}"
     return label
@@ -147,15 +157,17 @@ def extract_packets(
         # Bluetooth addresses are lower-case in the capture.
         normalized_mac = mac_filter.lower().replace("-", ":")
         display_filter += (
-            f" && (bluetooth.src == {normalized_mac} "
-            f"|| bluetooth.dst == {normalized_mac})"
+            f" && (bluetooth.src == {normalized_mac} || bluetooth.dst == {normalized_mac})"
         )
 
     LOGGER.info("opening %s with filter: %s", cap_path, display_filter)
 
     with pyshark.FileCapture(
-        str(cap_path), display_filter=display_filter, use_json=True,
-        include_raw=False, keep_packets=False,
+        str(cap_path),
+        display_filter=display_filter,
+        use_json=True,
+        include_raw=False,
+        keep_packets=False,
     ) as cap:
         for pkt in cap:
             try:
@@ -187,7 +199,7 @@ def extract_packets(
 
             # Determine direction: if the MAC filter matches the destination,
             # this is a TX (phone -> device). If it matches the source, RX.
-            if normalized_mac:
+            if normalized_mac:  # noqa: SIM108 — nested ternary reads worse here
                 direction = "tx" if dst == normalized_mac else "rx"
             else:
                 # No MAC filter — can't determine direction reliably
@@ -263,10 +275,10 @@ def main() -> int:
     parser.add_argument("capture", help="Path to btsnoop_hci.log / .cfa file")
     parser.add_argument("--mac", help="Filter to a Bluetooth MAC address")
     parser.add_argument("--writes-only", action="store_true")
-    parser.add_argument("--govee-only", action="store_true",
-                        help="Only show packets with a Govee prefix byte")
-    parser.add_argument("--json", metavar="PATH",
-                        help="Save extracted packets as JSON")
+    parser.add_argument(
+        "--govee-only", action="store_true", help="Only show packets with a Govee prefix byte"
+    )
+    parser.add_argument("--json", metavar="PATH", help="Save extracted packets as JSON")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 

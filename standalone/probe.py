@@ -25,9 +25,9 @@ import sys
 
 from govee_h7015 import (
     GoveeH7015Client,
-    Scene,
-    MusicMode,
     H7015State,
+    MusicMode,
+    Scene,
 )
 
 
@@ -144,9 +144,7 @@ async def repl(client: GoveeH7015Client) -> None:
                 r, g, b = (int(rest[i]) for i in (1, 2, 3)) if len(rest) >= 4 else (0, 0, 0)
                 await client.set_music_mode(mode, r, g, b)
             elif cmd == "segment":
-                await client.set_segment(
-                    int(rest[0]), int(rest[1]), int(rest[2]), int(rest[3])
-                )
+                await client.set_segment(int(rest[0]), int(rest[1]), int(rest[2]), int(rest[3]))
             elif cmd == "gradient":
                 await client.set_gradient(rest[0].lower() in ("on", "true", "1"))
             elif cmd == "state":
@@ -173,8 +171,7 @@ async def main() -> None:
     parser.add_argument("--color", nargs=3, type=int, metavar=("R", "G", "B"))
     parser.add_argument("--warm", action="store_true")
     parser.add_argument("--scene", choices=[s.name.lower() for s in Scene])
-    parser.add_argument("--segment", nargs=4, type=int,
-                        metavar=("BULB", "R", "G", "B"))
+    parser.add_argument("--segment", nargs=4, type=int, metavar=("BULB", "R", "G", "B"))
     parser.add_argument("--no-keepalive", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
@@ -208,10 +205,17 @@ async def main() -> None:
             await client.set_segment(bulb, r, g, b)
 
         # If no specific command was given, run the self-test.
-        if not any([
-            args.on, args.off, args.brightness is not None, args.color,
-            args.warm, args.scene, args.segment,
-        ]):
+        if not any(
+            [
+                args.on,
+                args.off,
+                args.brightness is not None,
+                args.color,
+                args.warm,
+                args.scene,
+                args.segment,
+            ]
+        ):
             await self_test(client)
 
         # Hold connection briefly so the final command lands.

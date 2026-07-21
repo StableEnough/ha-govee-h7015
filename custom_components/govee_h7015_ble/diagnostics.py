@@ -6,23 +6,29 @@ Settings → Devices & Services → Govee H7015 BLE → Download diagnostics.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceEntry
+from homeassistant.components.diagnostics import async_redact_data
 
 from .const import DOMAIN
-from .coordinator import H7015Coordinator
+
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.device_registry import DeviceEntry
+
+    from .coordinator import H7015Coordinator
+
+# MAC addresses identify a specific physical device — redact them from
+# diagnostics dumps since those are often pasted into public bug reports.
+TO_REDACT = {"mac"}
 
 
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
-    coordinator: H7015Coordinator | None = hass.data.get(DOMAIN, {}).get(
-        entry.entry_id
-    )
+    coordinator: H7015Coordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
 
     data: dict[str, Any] = {
         "entry": {
@@ -49,7 +55,7 @@ async def async_get_config_entry_diagnostics(
             "keepalive_running": coordinator.keepalive_running,
         }
 
-    return data
+    return async_redact_data(data, TO_REDACT)
 
 
 async def async_get_device_diagnostics(

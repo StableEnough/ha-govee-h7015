@@ -33,10 +33,10 @@ class GoveeInvalidArgumentError(GoveeError):
 
 
 __all__ = [
-    "GoveeError",
-    "GoveeConnectionError",
-    "GoveeTimeoutError",
-    "GoveeProtocolError",
     "GoveeChecksumError",
+    "GoveeConnectionError",
+    "GoveeError",
     "GoveeInvalidArgumentError",
+    "GoveeProtocolError",
+    "GoveeTimeoutError",
 ]

@@ -5,10 +5,14 @@
 default:
     @just --list
 
-# One-time setup: install uv + sync all deps
+# One-time setup: install uv + sync deps for development/testing.
+# Note: --extra bridge (needed to actually *run* the MQTT bridge) is left out
+# on purpose — it conflicts with --extra test-ha (see pyproject.toml's
+# [tool.uv].conflicts). Run `uv sync --extra bridge` separately if you need
+# to run standalone/mqtt_bridge.py for real.
 setup:
     curl -LsSf https://astral.sh/uv/install.sh | sh
-    uv sync --all-extras
+    uv sync --extra dev --extra test-ha --extra analyze
 
 # Run the protocol test suite
 test:
@@ -54,7 +58,7 @@ probe address:
 
 # Run the MQTT bridge
 bridge:
-    uv run python standalone/mqtt_bridge.py
+    uv run --extra bridge python standalone/mqtt_bridge.py
 
 # Build the Docker image
 docker:

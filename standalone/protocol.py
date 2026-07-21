@@ -164,10 +164,7 @@ def brightness_to_raw(percent: int) -> int:
         return 0x00
     if percent >= 100:
         return BRIGHTNESS_MAX_RAW
-    return int(
-        BRIGHTNESS_MIN_RAW
-        + (BRIGHTNESS_MAX_RAW - BRIGHTNESS_MIN_RAW) * (percent - 1) / 99
-    )
+    return int(BRIGHTNESS_MIN_RAW + (BRIGHTNESS_MAX_RAW - BRIGHTNESS_MIN_RAW) * (percent - 1) / 99)
 
 
 def raw_to_brightness(raw: int) -> int:
@@ -220,9 +217,7 @@ def validate_packet(packet: bytes) -> RawPacket:
     Raises GoveeChecksumError if the checksum doesn't match.
     """
     if len(packet) != PACKET_LEN:
-        raise GoveeChecksumError(
-            f"packet must be {PACKET_LEN} bytes, got {len(packet)}"
-        )
+        raise GoveeChecksumError(f"packet must be {PACKET_LEN} bytes, got {len(packet)}")
     expected = checksum(packet[:-1])
     if packet[-1] != expected:
         raise GoveeChecksumError(
@@ -326,9 +321,7 @@ def pkt_segment(bulb: BulbIndex, r: int, g: int, b: int) -> RawPacket:
     used here — confirm via HCI capture and patch this function.
     """
     if not 0 <= bulb < BULB_COUNT:
-        raise GoveeInvalidArgumentError(
-            f"bulb index must be 0..{BULB_COUNT - 1}, got {bulb}"
-        )
+        raise GoveeInvalidArgumentError(f"bulb index must be 0..{BULB_COUNT - 1}, got {bulb}")
     rgb = _clamp_rgb((r, g, b))
     left, right = _bulb_to_bitmask(bulb)
     return build_packet(
@@ -424,7 +417,7 @@ def pkt_diy(
 
     # Data packet 1: style, mode, speed, colors[0:2]
     data1 = bytearray([0xA1, 0x02, 0x01, name, style.value, style_mode.value, speed_byte, 0x18])
-    for i, (r, g, b) in enumerate(clamped[:2]):
+    for r, g, b in clamped[:2]:
         data1.extend([r, g, b])
     # Pad to 19 bytes (before checksum)
     while len(data1) < 19:
@@ -543,19 +536,19 @@ __all__ = [
     "BRIGHTNESS_MAX_RAW",
     "BRIGHTNESS_MIN_RAW",
     "BULB_COUNT",
-    "Command",
-    "ColorMode",
-    "DIYStyle",
-    "DIYStyleMode",
     "KEEPALIVE_INTERVAL",
-    "MusicMode",
     "PACKET_LEN",
     "READ_CHAR_UUID",
     "SERVICE_UUID",
-    "Scene",
     "WRITE_CHAR_UUID",
+    "ColorMode",
+    "Command",
+    "DIYStyle",
+    "DIYStyleMode",
     "H7015State",
+    "MusicMode",
     "RawPacket",
+    "Scene",
     "brightness_to_raw",
     "build_packet",
     "checksum",

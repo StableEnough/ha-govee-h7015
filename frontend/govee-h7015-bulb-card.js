@@ -218,6 +218,19 @@ function hexToRgb(hex) {
   return [r, g, b];
 }
 
+// Entity friendly_name (and by extension entity_id) isn't trusted input —
+// it can come from a device's advertised BLE name at discovery time, or
+// from anyone with entity-rename access. Escape before interpolating into
+// innerHTML so it can't inject markup/script into the dashboard.
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 
 class GoveeH7015BulbCard extends HTMLElement {
   static get properties() {
@@ -267,7 +280,7 @@ class GoveeH7015BulbCard extends HTMLElement {
     const stateObj = this._hass.states[entityId];
 
     if (!stateObj) {
-      this.shadowRoot.innerHTML = `<div style="padding:16px;color:var(--error-color)">Entity ${entityId} not found</div>`;
+      this.shadowRoot.innerHTML = `<div style="padding:16px;color:var(--error-color)">Entity ${escapeHtml(entityId)} not found</div>`;
       return;
     }
 
@@ -471,7 +484,7 @@ class GoveeH7015BulbCard extends HTMLElement {
         }
       </style>
       <div class="header">
-        <h3>${stateObj.attributes.friendly_name || entityId}</h3>
+        <h3>${escapeHtml(stateObj.attributes.friendly_name || entityId)}</h3>
         <div class="header-actions">
           <div class="save-scene-btn" id="save-scene-btn">💾 Save as Scene</div>
           <div class="power-toggle" id="power-toggle">${isOn ? "ON" : "OFF"}</div>
@@ -504,7 +517,7 @@ class GoveeH7015BulbCard extends HTMLElement {
       <div class="scene-dialog" id="scene-dialog">
         <h4>💾 Save Current Colors as Scene</h4>
         <input type="text" id="scene-name-input" placeholder="Scene name (e.g. Christmas)"
-               value="${this.sceneName}">
+               value="${escapeHtml(this.sceneName)}">
         <div class="buttons">
           <div class="btn btn-cancel" id="scene-cancel">Cancel</div>
           <div class="btn btn-save" id="scene-save">Save Scene</div>

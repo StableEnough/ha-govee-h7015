@@ -31,7 +31,7 @@ rules:
     comment: "No authentication — BLE device has no login."
   test_coverage:
     status: done
-    comment: "237 tests covering protocol, models, config flow, entity setup, services, and mock device."
+    comment: "243 tests covering protocol, models, config flow, entity setup, services, and mock device."
 
   # === Silver (reliability) ===
   action_exception:
@@ -71,4 +71,6 @@ rules:
     comment: "Need to add brand/ directory with icon.png and logo.png (HA 2026.3+)."
   parallel_updates:
     status: done
-    comment: "BLE operations serialized via asyncio.Lock in coordinator."
+    comment: "light.py sets PARALLEL_UPDATES = 1 (only one BLE connection at a time,
+      shared by all 16 entities). Writes are additionally serialized via
+      asyncio.Lock in the coordinator."

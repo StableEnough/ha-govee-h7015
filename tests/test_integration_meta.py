@@ -15,13 +15,6 @@ sys.path.insert(0, str(ROOT / "standalone"))
 
 import json
 
-from protocol import (  # type: ignore[import-not-found]
-    checksum,
-    pkt_power,
-    pkt_brightness,
-    pkt_solid_color,
-)
-
 
 def test_manifest_json_is_valid() -> None:
     """manifest.json must parse and have required HA fields."""

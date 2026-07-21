@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -18,15 +18,10 @@ from models import (  # type: ignore[import-not-found]
     ColorCommand,
     DeviceConfig,
     DeviceState,
-    HAColor,
-    HANativePayload,
-    PowerCommand,
-    SceneCommand,
     SegmentCommand,
     parse_command,
 )
 from pydantic import ValidationError
-
 
 # Strategies
 st_rgb = st.tuples(
@@ -57,9 +52,7 @@ class TestParseCommandRoundTrip:
     @given(st_rgb)
     def test_color_round_trip(self, rgb: tuple[int, int, int]) -> None:
         r, g, b = rgb
-        cmd = parse_command(
-            json.dumps({"cmd": "color", "r": r, "g": g, "b": b}).encode()
-        )
+        cmd = parse_command(json.dumps({"cmd": "color", "r": r, "g": g, "b": b}).encode())
         assert isinstance(cmd, ColorCommand)
         assert (cmd.r, cmd.g, cmd.b) == rgb
 

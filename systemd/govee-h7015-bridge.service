@@ -12,6 +12,22 @@ EnvironmentFile=/opt/govee-h7015/.env
 Restart=on-failure
 RestartSec=10
 TimeoutStartSec=30
+
+# Baseline sandboxing — safe regardless of which user this runs as, and
+# doesn't require any extra setup. BlueZ access goes over D-Bus, which
+# these don't restrict.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectClock=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# Uncomment and add your GOVEE_STATE_CACHE directory if you enable it —
+# ProtectSystem=strict makes the filesystem read-only otherwise.
+# ReadWritePaths=/var/lib/govee-h7015
+
 # Drop privileges if you create a dedicated user.
 # User=govee
 # Group=govee
