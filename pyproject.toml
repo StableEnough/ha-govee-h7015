@@ -1,0 +1,134 @@
+[project]
+name = "govee-h7015"
+version = "1.1.0"
+description = "Govee H7015 Outdoor String Lights — BLE protocol library, MQTT bridge, and Home Assistant custom integration"
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+authors = [
+    { name = "Govee H7015 Reverse Engineering Community" },
+]
+requires-python = ">=3.12"
+keywords = ["govee", "h7015", "home-assistant", "ble", "bluetooth", "iot", "smart-home"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Home Automation",
+]
+dependencies = [
+    "bleak>=0.22",
+    "bleak-retry-connector>=3.4",
+    "aiomqtt>=2.3",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+]
+
+[project.optional-dependencies]
+analyze = ["pyshark>=0.6"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-homeassistant-custom-component>=0.13",
+    "hypothesis>=6.100",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "homeassistant>=2024.8",
+    "pre-commit>=3.7",
+    "pyserial>=3.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/StableEnough/ha-govee-h7015"
+Repository = "https://github.com/StableEnough/ha-govee-h7015"
+Issues = "https://github.com/StableEnough/ha-govee-h7015/issues"
+Documentation = "https://github.com/StableEnough/ha-govee-h7015#readme"
+
+[project.scripts]
+govee-h7015-scan = "standalone.scan:main"
+govee-h7015-probe = "standalone.probe:main"
+govee-h7015-bridge = "standalone.mqtt_bridge:main"
+govee-h7015-analyze = "standalone.analyze_hci:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["standalone"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",     # pycodestyle + pyflakes
+    "I",               # isort
+    "UP",              # pyupgrade
+    "B",               # bugbear
+    "SIM",             # simplify
+    "RUF",             # ruff-specific
+    "C4",              # comprehensions
+    "PIE",             # flake8-pie
+    "PT",              # pytest-style
+    "ASYNC",           # flake8-async
+    "S",               # bandit (security)
+    "TCH",             # type-checking imports
+    "PERF",            # perflint
+    "FURB",            # refactor
+    "PL",              # pylint
+]
+ignore = [
+    "E501",      # line length handled by formatter
+    "PLR0913",   # too many args (fine for this codebase)
+    "S101",      # assert in tests is fine
+    "PLR2004",   # magic values in tests are fine
+]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "PLR2004", "S106"]
+"standalone/probe.py" = ["S106"]  # passwords in CLI examples
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = ["--strict-markers", "--strict-config"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+no_implicit_reexport = true
+strict_equality = true
+extra_checks = true
+files = ["standalone", "custom_components", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["homeassistant.*", "voluptuous.*", "habluetooth.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["bleak.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["paho.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["pyshark.*"]
+ignore_missing_imports = true

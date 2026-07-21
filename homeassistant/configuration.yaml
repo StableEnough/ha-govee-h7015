@@ -1,0 +1,178 @@
+# =============================================================================
+# Home Assistant configuration for the Govee H7015 MQTT bridge.
+#
+# The bridge (mqtt_bridge.py) publishes an MQTT discovery payload
+# automatically, so you normally do NOT need to add anything to
+# configuration.yaml -- the light will show up automatically under
+# Settings -> Devices & Services -> MQTT.
+#
+# This file is provided for two cases:
+#   1. You want to disable MQTT auto-discovery and configure the light
+#      manually.
+#   2. You want to add extra sensors / automations on top of the auto-
+#      discovered light.
+#
+# Replace AABBCCDDEEFF with your H7015's MAC (uppercase, no colons).
+# =============================================================================
+
+# --- Example 1: Manual MQTT light (alternative to auto-discovery) ----------
+# Uncomment and edit if you prefer explicit configuration.
+#
+# mqtt:
+#   light:
+#     - name: "Patio String Lights"
+#       unique_id: govee_h7015_aabbccddeeff
+#       schema: json
+#       state_topic: "govee/h7015/AABBCCDDEEFF/state"
+#       command_topic: "govee/h7015/AABBCCDDEEFF/set"
+#       availability_topic: "govee/h7015/AABBCCDDEEFF/availability"
+#       brightness: true
+#       brightness_scale: 100
+#       color_mode: true
+#       supported_color_modes: ["rgb", "color_temp"]
+#       min_mireds: 154    # 6500K (cold)
+#       max_mireds: 500    # 2000K (warm)
+#       effect: true
+#       effect_list:
+#         # 47 scene modes
+#         - sunrise
+#         - sunset
+#         - snowing
+#         - cloud
+#         - movie
+#         - gorgeous
+#         - dating
+#         - romantic
+#         - twinkle
+#         - candlelight
+#         - breathe
+#         - blinking
+#         - starry
+#         - flow
+#         - dream
+#         - snowflake
+#         - energetic
+#         - jumping
+#         - volcano
+#         - ripple
+#         - crossing
+#         - shadow
+#         - wind
+#         - rainbow
+#         - ocean
+#         - aurora
+#         - forest
+#         - waterfall
+#         - firefly
+#         - sparkle
+#         - meteor
+#         - galaxy
+#         - sunny
+#         - night
+#         - dawn
+#         - dusk
+#         - spring
+#         - summer
+#         - autumn
+#         - winter
+#         - christmas
+#         - halloween
+#         - thanksgiving
+#         - valentine
+#         - new_year
+#         - birthday
+#         - party
+#         - relax
+#         - energize
+#         - focus
+#         - reading
+#         - night_light
+#         - celebrate
+#         - festive
+#         - gradient
+#         - pulse
+#         - wave
+#         - chase
+#         - stack
+#         # 4 music modes
+#         - music_energic
+#         - music_spectrum
+#         - music_rolling
+#         - music_rhythm
+#       device:
+#         identifiers: ["govee_h7015_AABBCCDDEEFF"]
+#         name: "Patio String Lights"
+#         manufacturer: "Govee"
+#         model: "H7015"
+#         sw_version: "reverse-engineered"
+
+# --- Example 2: Binary sensor for connectivity -----------------------------
+mqtt:
+  binary_sensor:
+    - name: "Patio Lights Connected"
+      unique_id: govee_h7015_aabbccddeeff_connected
+      state_topic: "govee/h7015/AABBCCDDEEFF/availability"
+      payload_on: "online"
+      payload_off: "offline"
+      device_class: connectivity
+
+  sensor:
+    - name: "Patio Lights Raw State"
+      unique_id: govee_h7015_aabbccddeeff_raw
+      state_topic: "govee/h7015/AABBCCDDEEFF/attributes"
+      value_template: "{{ value_json.raw }}"
+      icon: mdi:hexadecimal
+
+# --- Example 3: Automation - turn patio lights on at sunset ----------------
+automation:
+  - id: govee_h7015_sunset_on
+    alias: "Turn on patio lights at sunset"
+    trigger:
+      - platform: sun
+        event: sunset
+        offset: "-00:15:00"
+    action:
+      - service: light.turn_on
+        target:
+          entity_id: light.patio_string_lights
+        data:
+          brightness: 60
+          color_temp: 370  # ~2700K warm white
+    mode: single
+
+  - id: govee_h7015_off_midnight
+    alias: "Turn off patio lights at midnight"
+    trigger:
+      - platform: time
+        at: "00:00:00"
+    action:
+      - service: light.turn_off
+        target:
+          entity_id: light.patio_string_lights
+    mode: single
+
+# --- Example 4: Per-bulb segment control via a script ----------------------
+# Lets you set individual bulbs through the HA "Call Service" UI.
+script:
+  set_patio_bulb:
+    alias: "Set patio bulb color"
+    fields:
+      bulb:
+        description: "Bulb index 0-14"
+        example: 0
+      r:
+        description: "Red 0-255"
+        example: 255
+      g:
+        description: "Green 0-255"
+        example: 0
+      b:
+        description: "Blue 0-255"
+        example: 0
+    sequence:
+      - service: mqtt.publish
+        data:
+          topic: "govee/h7015/AABBCCDDEEFF/set"
+          payload: >-
+            {"cmd":"segment","bulb":{{ bulb }},"r":{{ r }},"g":{{ g }},"b":{{ b }}}
+    mode: single

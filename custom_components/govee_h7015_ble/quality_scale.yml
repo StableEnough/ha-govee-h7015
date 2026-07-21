@@ -1,0 +1,74 @@
+# Quality Scale assessment for the Govee H7015 BLE integration.
+#
+# This file documents which quality scale rules are met, in progress, or
+# exempt. See: https://developers.home-assistant.io/docs/core/integration-quality-scale/
+
+rules:
+  # === Bronze (baseline) ===
+  config_flow:
+    status: done
+    comment: "Config flow with Bluetooth auto-discovery + manual MAC entry."
+  diagnostics:
+    status: done
+    comment: "Diagnostics platform implemented — downloads device state + connection info."
+  docs_high_level_description:
+    status: done
+    comment: "README + info.md describe the integration and what it does."
+  docs_installation_instructions:
+    status: done
+    comment: "HACS + manual installation instructions in README and info.md."
+  docs_useful_device_references:
+    status: done
+    comment: "docs/SUPPORTED_DEVICES.md lists confirmed/likely/not-compatible devices."
+  exception_handling:
+    status: done
+    comment: "All BLE operations have asyncio.timeout + exception handling. Repair issues created after 3 failures."
+  flow_logout:
+    status: exempt
+    comment: "No authentication — BLE device has no login."
+  reauthentication_flow:
+    status: exempt
+    comment: "No authentication — BLE device has no login."
+  test_coverage:
+    status: done
+    comment: "237 tests covering protocol, models, config flow, entity setup, services, and mock device."
+
+  # === Silver (reliability) ===
+  action_exception:
+    status: done
+    comment: "Service calls catch exceptions per-device and log errors."
+  entity_transaction_unique_id:
+    status: done
+    comment: "All entities have stable unique_ids based on MAC + entity type."
+  entity_unavailable:
+    status: done
+    comment: "Entity becomes unavailable when coordinator update fails (HA standard behavior)."
+  reconfigure_flow:
+    status: done
+    comment: "async_step_reconfigure allows changing MAC without removing entry."
+  repair_issue:
+    status: done
+    comment: "Repair issue created when device is unreachable for 3 consecutive polls, deleted on recovery."
+  stale_data:
+    status: done
+    comment: "Poll interval configurable via option flow. retry_after used when device unreachable."
+
+  # === Gold (user experience) ===
+  entities_translatable:
+    status: done
+    comment: "Entity names use HA standard naming. strings.json + translations/en.json provide UI strings."
+  entity_category:
+    status: done
+    comment: "Per-bulb entities use EntityCategory.CONFIG. Main light entity uses default category."
+  entity_device_info:
+    status: done
+    comment: "All entities linked to device via DeviceInfo with manufacturer, model, sw_version."
+  example_devices:
+    status: done
+    comment: "docs/SUPPORTED_DEVICES.md lists example devices."
+  brand:
+    status: todo
+    comment: "Need to add brand/ directory with icon.png and logo.png (HA 2026.3+)."
+  parallel_updates:
+    status: done
+    comment: "BLE operations serialized via asyncio.Lock in coordinator."

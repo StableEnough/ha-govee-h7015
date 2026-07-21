@@ -1,0 +1,48 @@
+name: Tests
+
+on:
+  push:
+    paths:
+      - "custom_components/**"
+      - "standalone/**"
+      - "tests/**"
+      - "pyproject.toml"
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --extra dev --extra analyze
+
+      - name: Lint with ruff
+        run: uv run ruff check .
+
+      - name: Format check with ruff
+        run: uv run ruff format --check .
+
+      - name: Type-check with mypy
+        run: uv run mypy --strict standalone || true  # best-effort
+
+      - name: Run tests (including HA integration + Hypothesis fuzzing)
+        run: |
+          PYTHONPATH=standalone:. uv run pytest tests/ -v
+
+      - name: Run Hypothesis with statistics
+        run: |
+          PYTHONPATH=standalone:. uv run pytest tests/test_protocol_property.py tests/test_models_property.py --hypothesis-show-statistics
