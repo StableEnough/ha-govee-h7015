@@ -40,6 +40,9 @@ jobs:
     runs-on: docker
     container: ghcr.io/astral-sh/uv:python3.13-bookworm
     steps:
+      # JavaScript actions need Node inside the Python job container.
+      - name: Install action runtime
+        run: apt-get update && apt-get install -y --no-install-recommends nodejs
       - uses: https://github.com/actions/checkout@v4
         with:
           persist-credentials: false
