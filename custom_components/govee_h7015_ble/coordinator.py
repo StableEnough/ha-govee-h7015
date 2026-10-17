@@ -329,6 +329,10 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         await self._send(packet)
         self._bulb_colors[bulb] = (packet[4], packet[5], packet[6])
 
+    async def send_raw(self, packet: bytes) -> None:
+        """Write an arbitrary packet without touching cached state (diagnostics)."""
+        await self._send(packet)
+
     async def set_color_temperature(self, kelvin: int) -> None:
         """Set color temperature (warm/cold white) in Kelvin.
 

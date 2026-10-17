@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import voluptuous as vol
 
 # Make the integration importable BEFORE any HA fixtures run.
 # The project root must be on sys.path for `import custom_components` to work.
@@ -275,6 +276,48 @@ async def test_set_bulb_service_requires_target(hass) -> None:  # type: ignore[n
 
         # Verify set_bulb was NOT called
         mock_set_bulb.assert_not_called()
+
+
+async def test_send_raw_service_pads_and_checksums(hass) -> None:  # type: ignore[no-untyped-def]
+    """send_raw zero-pads to 20 bytes with an XOR checksum, and rejects bad input."""
+    entry = _make_config_entry("test_entry_raw")
+    entry.add_to_hass(hass)
+
+    async def mock_update(self):  # type: ignore[no-untyped-def]
+        return H7015State()
+
+    with (
+        patch.object(H7015Coordinator, "_async_update_data", mock_update),
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()),
+        patch.object(H7015Coordinator, "send_raw", new=AsyncMock()) as mock_send_raw,
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        from homeassistant.helpers import device_registry as dr
+
+        device = dr.async_get(hass).async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, "AABBCCDDEEFF")},
+            name="Patio Lights",
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            "send_raw",
+            {"hex": "33 05 02 FF 00 00", "device_id": [device.id]},
+            blocking=True,
+        )
+        sent = mock_send_raw.call_args.args[0]
+        assert sent == bytes.fromhex("330502ff0000") + bytes(13) + b"\xcb"
+
+        mock_send_raw.reset_mock()
+        for bad in ("zz", "", "00" * 20):
+            with pytest.raises(vol.Invalid):
+                await hass.services.async_call(
+                    DOMAIN, "send_raw", {"hex": bad, "device_id": [device.id]}, blocking=True
+                )
+        mock_send_raw.assert_not_called()
 
 
 async def test_per_bulb_entities_created(hass) -> None:  # type: ignore[no-untyped-def]
