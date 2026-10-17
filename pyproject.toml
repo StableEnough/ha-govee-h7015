@@ -166,5 +166,9 @@ module = ["paho.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = ["aiomqtt.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = ["pyshark.*"]
 ignore_missing_imports = true

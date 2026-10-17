@@ -18,16 +18,16 @@ try:
     from bleak import BleakClient
     from bleak.exc import BleakError
 except ImportError:  # pragma: no cover — bleak only needed for live use
-    BleakClient = None  # type: ignore[assignment,unused-ignore]
+    BleakClient = None  # type: ignore[assignment,misc]
     BleakError = Exception  # type: ignore[assignment,misc]
 
-from exceptions import (  # type: ignore[import-not-found]
+from exceptions import (
     GoveeConnectionError,
     GoveeError,
     GoveeTimeoutError,
 )
-from govee_types import BulbIndex, MacAddress  # type: ignore[import-not-found]
-from protocol import (  # type: ignore[import-not-found]
+from govee_types import BulbIndex, MacAddress
+from protocol import (
     KEEPALIVE_INTERVAL,
     WRITE_CHAR_UUID,
     H7015State,
@@ -84,7 +84,7 @@ class GoveeH7015Client:
         self.keepalive_enabled = keepalive
         self.reconnect_enabled = reconnect
         self.state_callback = state_callback
-        self._client: BleakClient | None = None  # type: ignore[assignment]
+        self._client: BleakClient | None = None
         self._keepalive_task: asyncio.Task[None] | None = None
         self._reconnect_task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()

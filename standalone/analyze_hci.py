@@ -248,7 +248,7 @@ def summarize(packets: list[GoveePacket]) -> None:
 
     govee = [p for p in packets if p.govee_kind]
     print(f"\n=== Govee packets: {len(govee)} ===")
-    by_gk = Counter(p.govee_kind for p in govee)
+    by_gk = Counter(p.govee_kind for p in govee if p.govee_kind)
     for k, v in by_gk.most_common():
         print(f"  {k:10s} {v}")
 

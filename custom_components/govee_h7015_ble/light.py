@@ -15,11 +15,11 @@ from homeassistant.components.light import (
     ATTR_COLOR_TEMP_KELVIN,
     ATTR_EFFECT,
     ATTR_RGB_COLOR,
-    ColorMode,
     LightEntity,
-    LightEntityFeature,
 )
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.components.light.const import ColorMode, LightEntityFeature
+from homeassistant.const import EntityCategory
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_MAC, CONF_NAME, DOMAIN, EFFECTS

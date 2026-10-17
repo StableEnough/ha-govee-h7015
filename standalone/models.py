@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -198,6 +198,7 @@ class HADiscovery(BaseModel):
     effect_list: list[str]
     json_attributes_topic: str
     availability_mode: str = "latest"
+    device: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------

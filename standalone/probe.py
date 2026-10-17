@@ -23,12 +23,8 @@ import logging
 import shlex
 import sys
 
-from govee_h7015 import (
-    GoveeH7015Client,
-    H7015State,
-    MusicMode,
-    Scene,
-)
+from govee_h7015 import GoveeH7015Client
+from protocol import H7015State, MusicMode, Scene
 
 
 def print_state(state: H7015State) -> None:

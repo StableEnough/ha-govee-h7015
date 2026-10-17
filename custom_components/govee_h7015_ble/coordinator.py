@@ -113,7 +113,7 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         """
         if self.data is not None:
             return self.data
-        return self._device_state
+        return self._device_state  # type: ignore[unreachable]  # data is None before first poll
 
     @property
     def is_connected(self) -> bool:

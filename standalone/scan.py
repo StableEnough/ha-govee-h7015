@@ -17,11 +17,16 @@ import argparse
 import asyncio
 import logging
 import re
+from typing import TYPE_CHECKING
 
 try:
     from bleak import BleakScanner
 except ImportError:
     raise SystemExit("Please install bleak:  pip install bleak") from None
+
+if TYPE_CHECKING:
+    from bleak.backends.device import BLEDevice
+    from bleak.backends.scanner import AdvertisementData
 
 
 def looks_like_govee(name: str | None) -> bool:
@@ -52,7 +57,7 @@ async def main() -> None:
 
     found: dict[str, str] = {}
 
-    def detection_callback(device, advertisement_data):
+    def detection_callback(device: BLEDevice, advertisement_data: AdvertisementData) -> None:
         name = advertisement_data.local_name or device.name or ""
         if not args.all and not looks_like_govee(name):
             return

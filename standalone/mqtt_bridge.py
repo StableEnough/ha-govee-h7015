@@ -44,7 +44,8 @@ try:
 except ImportError:
     pass
 
-from govee_h7015 import GoveeError, GoveeH7015Client
+from exceptions import GoveeError
+from govee_h7015 import GoveeH7015Client
 from govee_types import MacAddress
 from models import (
     BrightnessCommand,
@@ -129,7 +130,8 @@ class StateCache:
         if not self.path or not self.path.exists():
             return {}
         try:
-            return json.loads(self.path.read_text())
+            data: dict[str, dict[str, Any]] = json.loads(self.path.read_text())
+            return data
         except Exception as exc:
             LOGGER.warning("state cache unreadable: %s", exc)
             return {}
@@ -552,7 +554,7 @@ async def main_async(args: argparse.Namespace) -> int:
         for d in devices
     ]
 
-    fatal_error: Exception | None = None
+    fatal_error: BaseException | None = None
 
     def _task_done(task: asyncio.Task[None]) -> None:
         nonlocal fatal_error
