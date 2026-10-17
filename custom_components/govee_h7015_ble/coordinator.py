@@ -25,8 +25,8 @@ from .exceptions import (
     GoveeError,
 )
 from .protocol import (
+    BULB_COUNT,
     KEEPALIVE_INTERVAL,
-    READ_CHAR_UUID,
     WRITE_CHAR_UUID,
     H7015State,
     MusicMode,
@@ -50,6 +50,8 @@ _LOGGER = logging.getLogger(__name__)
 
 # BLE operation timeout — prevents indefinite hangs if the radio wedges.
 BLE_OP_TIMEOUT: Final = 10.0
+# Minimum gap between GATT writes (spec write_pacing).
+WRITE_GAP: Final = 0.08
 # Connect timeout — HA recommends >= 10s for BlueZ service resolution.
 BLE_CONNECT_TIMEOUT: Final = 20.0
 
@@ -85,12 +87,11 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         self._client: BleClient | None = None
         self._keepalive_task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
+        self._last_write = float("-inf")
         self._connect_lock = asyncio.Lock()  # prevents concurrent _ensure_connected
         self._device_state: H7015State = H7015State()
-        # Per-bulb state: last commanded color for each of the 15 bulbs.
-        # The H7015 doesn't report per-bulb state via the read characteristic,
-        # so we track what we last sent. If someone changes a bulb via the
-        # Govee app, this will be stale until the next set_bulb call.
+        # Per-bulb colors are last-commanded state, not hardware readback.
+        # Changes made through the Govee app may leave this cache stale.
         self._bulb_colors: dict[int, RGB] = {}
         # Track consecutive connection failures for repair issue creation.
         self._consecutive_failures = 0
@@ -162,13 +163,9 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
 
             try:
                 async with asyncio.timeout(BLE_CONNECT_TIMEOUT):
-                    # establish_connection() (inside _build_client) is what
-                    # actually performs the BLE connect over BlueZ D-Bus and
-                    # can hang indefinitely if the device never responds —
-                    # it must be inside the timeout, not client.connect(),
-                    # which is a no-op once already connected.
+                    # establish_connection() inside _build_client() connects
+                    # over BlueZ and may hang, so keep it inside the timeout.
                     client = await self._build_client(ble_device)
-                    await client.connect()
                 await asyncio.sleep(0.2)  # service-discovery quirk
             except TimeoutError as exc:
                 raise UpdateFailed(f"connect timeout for {self.mac}") from exc
@@ -178,6 +175,20 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
                 # bleak-retry-connector handles most transient errors, but
                 # anything that escapes it should still produce a clear message.
                 raise UpdateFailed(f"BLE connection failed: {exc}") from exc
+
+            # Subscribe before any write (spec); clean up on failure.
+            try:
+                async with asyncio.timeout(BLE_OP_TIMEOUT):
+                    await client.start_notify(WRITE_CHAR_UUID, self._on_notify)
+            except BaseException as exc:
+                with contextlib.suppress(Exception):
+                    async with asyncio.timeout(BLE_OP_TIMEOUT):
+                        await client.disconnect()
+                if isinstance(exc, TimeoutError):
+                    raise UpdateFailed(f"notification subscribe timed out for {self.mac}") from exc
+                if isinstance(exc, Exception):
+                    raise UpdateFailed(f"notification subscribe failed: {exc}") from exc
+                raise
 
             self._client = client
             self._keepalive_task = asyncio.create_task(self._keepalive_loop())
@@ -227,7 +238,8 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         if self._client:
             with contextlib.suppress(Exception):  # pragma: no cover — best-effort cleanup
                 if self._client.is_connected:
-                    await self._client.disconnect()
+                    async with asyncio.timeout(BLE_OP_TIMEOUT):
+                        await self._client.disconnect()
             self._client = None
 
     async def _keepalive_loop(self) -> None:
@@ -244,8 +256,8 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
                     try:
                         async with self._lock:
                             async with asyncio.timeout(BLE_OP_TIMEOUT):
-                                await self._client.write_gatt_char(
-                                    WRITE_CHAR_UUID, pkt_keepalive(), response=False
+                                await self._write_paced(
+                                    self._client, pkt_keepalive(), response=True
                                 )
                     except TimeoutError:
                         _LOGGER.warning("keepalive timed out — connection may be dead")
@@ -263,14 +275,25 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
     # ------------------------------------------------------------------
     # Commands
     # ------------------------------------------------------------------
+    async def _write_paced(self, client: BleClient, packet: bytes, *, response: bool) -> None:
+        """Single paced write; caller MUST hold self._lock."""
+        loop = asyncio.get_running_loop()
+        wait = WRITE_GAP - (loop.time() - self._last_write)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        try:
+            await client.write_gatt_char(WRITE_CHAR_UUID, packet, response=response)
+        finally:
+            self._last_write = loop.time()
+
     async def _send(self, packet: bytes) -> None:
-        """Write a packet to the device with timeout and locking."""
+        """Write a packet to the device with timeout, locking and pacing."""
         client = await self._ensure_connected()
         async with self._lock:
             _LOGGER.debug("TX %s", packet.hex())
             try:
                 async with asyncio.timeout(BLE_OP_TIMEOUT):
-                    await client.write_gatt_char(WRITE_CHAR_UUID, packet, response=True)
+                    await self._write_paced(client, packet, response=True)
             except TimeoutError as exc:
                 raise UpdateFailed(f"write timed out: {exc}") from exc
             except Exception as exc:
@@ -282,12 +305,16 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         self._update_state(power=on)
 
     async def set_brightness(self, percent: int) -> None:
-        await self._send(pkt_brightness(percent))
-        self._update_state(brightness=percent)
+        packet = pkt_brightness(percent)
+        await self._send(packet)
+        self._update_state(brightness=packet[2])
 
     async def set_color(self, r: int, g: int, b: int) -> None:
-        await self._send(pkt_solid_color(r, g, b))
-        self._update_state(rgb=(r, g, b), mode="manual")
+        packet = pkt_solid_color(r, g, b)
+        await self._send(packet)
+        rgb = (packet[4], packet[5], packet[6])
+        self._bulb_colors = dict.fromkeys(range(BULB_COUNT), rgb)
+        self._update_state(rgb=rgb, mode="manual")
 
     async def set_scene(self, scene: Scene) -> None:
         await self._send(pkt_scene(scene))
@@ -298,13 +325,14 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         self._update_state(mode=f"music:{mode.name.lower()}")
 
     async def set_bulb(self, bulb: BulbIndex, r: int, g: int, b: int) -> None:
-        await self._send(pkt_segment(bulb, r, g, b))
-        self._bulb_colors[bulb] = (r, g, b)
+        packet = pkt_segment(bulb, r, g, b)
+        await self._send(packet)
+        self._bulb_colors[bulb] = (packet[4], packet[5], packet[6])
 
     async def set_color_temperature(self, kelvin: int) -> None:
         """Set color temperature (warm/cold white) in Kelvin.
 
-        The H7015 has dedicated white LEDs. Range: 2000K (warm) to 6500K (cold).
+        This legacy encoding is not verified for the H7015.
         """
         await self._send(pkt_color_temperature(kelvin))
         self._update_state(mode=f"color_temp:{kelvin}")
@@ -329,24 +357,11 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
     # ------------------------------------------------------------------
     @override
     async def _async_update_data(self) -> H7015State:
+        # Spec: no readable state characteristic. Poll = heartbeat; replies (if any)
+        # arrive via notification and are merged by _on_notify. Return retained state.
         try:
-            client = await self._ensure_connected()
-            async with self._lock:
-                async with asyncio.timeout(BLE_OP_TIMEOUT):
-                    raw = await client.read_gatt_char(READ_CHAR_UUID)
-            # Decode polled state but preserve mode — the read characteristic
-            # doesn't report mode (scene/music/color_temp), so we keep the
-            # last-commanded mode to avoid wiping effect/color_temp state.
-            decoded = decode_state(raw)
-            self._device_state = dataclasses.replace(decoded, mode=self._device_state.mode)
-            if self.data is not None:
-                self.data = dataclasses.replace(
-                    self.data,
-                    power=decoded.power,
-                    brightness=decoded.brightness,
-                    rgb=decoded.rgb,
-                    raw=decoded.raw,
-                )
+            await self._ensure_connected()
+            await self._send(pkt_keepalive())
             # Success — reset failure counter and delete repair issue
             self._consecutive_failures = 0
             if self._repair_issue_created:
@@ -357,7 +372,7 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         except TimeoutError as exc:
             await self._teardown_client()
             self._track_failure()
-            raise UpdateFailed(f"BLE read timed out: {exc}") from exc
+            raise UpdateFailed(f"BLE heartbeat timed out: {exc}") from exc
         except GoveeError as exc:
             await self._teardown_client()
             self._track_failure()
@@ -369,7 +384,22 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
             await self._teardown_client()
             self._track_failure()
             raise UpdateFailed(f"unexpected: {exc}") from exc
-        return self._device_state
+        return self.device_state
+
+    def _on_notify(self, _char: Any, data: bytearray) -> None:
+        """Merge known fields from a notification; ACKs/unknown frames keep state."""
+        raw = bytes(data)
+        _LOGGER.debug("RX %s", raw.hex())
+        previous = self.device_state
+        changes: dict[str, Any] = {"raw": raw}
+        if raw[:1] == b"\xaa":  # 0x33 cmd-status ACKs are not state
+            decoded = decode_state(raw)
+            for field in ("power", "brightness", "rgb"):
+                value = getattr(decoded, field)
+                if value is not None:
+                    changes[field] = value
+        self._device_state = dataclasses.replace(previous, **changes)
+        self.async_set_updated_data(self._device_state)
 
     def _track_failure(self) -> None:
         """Track consecutive failures and create a repair issue after 3."""

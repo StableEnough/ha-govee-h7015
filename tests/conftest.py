@@ -6,7 +6,13 @@ auto_enable_custom_integrations fixture required by HA test framework.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock, patch
+
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 @pytest.fixture(autouse=True)
@@ -20,3 +26,13 @@ def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
     is never triggered for them.
     """
     return
+
+
+@pytest.fixture(autouse=True)
+def isolate_bluetooth_hardware(mock_bluetooth: None) -> Iterator[None]:
+    """Keep HA's Bluetooth manager on its no-local-management fallback."""
+    with patch(
+        "habluetooth.channels.bluez.MGMTBluetoothCtl.setup",
+        new=AsyncMock(side_effect=PermissionError("Bluetooth management disabled in tests")),
+    ):
+        yield

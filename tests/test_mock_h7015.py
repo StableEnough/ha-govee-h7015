@@ -86,20 +86,18 @@ async def test_mock_client_keepalive_ignored() -> None:
     assert client.mock_write_count == 1
 
 
-async def test_mock_client_read_returns_state() -> None:
-    """Reading the read characteristic should return a valid 20-byte packet."""
+async def test_mock_client_notify_delivers_frames_and_has_no_read_char() -> None:
+    """Notifications reach the subscriber; there is no readable state characteristic."""
     client = MockH7015Client()
     await client.connect()
-
-    # Set power on first
-    pkt = bytes([0x33, 0x01, 0x01]) + b"\x00" * 16 + bytes([0x33])
-    await client.write_gatt_char("00010203-0405-0607-0809-0a0b0c0d2b11", pkt, response=True)
-
-    # Read state
-    raw = await client.read_gatt_char("00010203-0405-0607-0809-0a0b0c0d2b10")
-
-    assert len(raw) == 20
-    assert raw[0] == 0x33  # command prefix
+    got: list[bytes] = []
+    await client.start_notify(
+        "00010203-0405-0607-0809-0a0b0c0d2b11", lambda _c, d: got.append(bytes(d))
+    )
+    frame = bytes([0xAB]) + b"\x00" * 19
+    client.notify(frame)
+    assert got == [frame]
+    assert not hasattr(client, "read_gatt_char")
 
 
 async def test_mock_client_write_count() -> None:

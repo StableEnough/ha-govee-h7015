@@ -1,7 +1,7 @@
 # H7015 HCI Capture Guide
 
-This guide walks you through capturing the H7015's Bluetooth packets so you
-can fill in the protocol gaps (per-bulb segments, warm-white encoding, DIY mode).
+This guide walks you through capturing the H7015's Bluetooth packets to verify
+segment addressing and fill protocol gaps such as warm-white, DIY, and state readback.
 
 ## What You'll Need
 

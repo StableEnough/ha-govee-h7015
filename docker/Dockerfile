@@ -21,10 +21,13 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 
 # Sync deps using the committed lockfile (fail if out of date)
-RUN uv sync --frozen --no-dev --extra bridge
+RUN uv sync --frozen --no-dev --extra bridge --no-install-project
 
 # Copy source (respects .dockerignore)
 COPY . .
 
-# Default to running the bridge.
-CMD ["uv", "run", "python", "standalone/mqtt_bridge.py"]
+# Install the project after its README and source files are available.
+RUN uv sync --frozen --no-dev --extra bridge
+
+# Default to running the installed bridge command.
+CMD ["uv", "run", "--no-sync", "govee-h7015-bridge"]

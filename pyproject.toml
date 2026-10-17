@@ -57,17 +57,11 @@ test-ha = [
     "aiousbwatcher>=1.1.1",
 ]
 
-[project.urls]
-Homepage = "https://github.com/StableEnough/ha-govee-h7015"
-Repository = "https://github.com/StableEnough/ha-govee-h7015"
-Issues = "https://github.com/StableEnough/ha-govee-h7015/issues"
-Documentation = "https://github.com/StableEnough/ha-govee-h7015#readme"
-
 [project.scripts]
-govee-h7015-scan = "standalone.scan:main"
-govee-h7015-probe = "standalone.probe:main"
-govee-h7015-bridge = "standalone.mqtt_bridge:main"
-govee-h7015-analyze = "standalone.analyze_hci:main"
+govee-h7015-scan = "scan:cli"
+govee-h7015-probe = "probe:cli"
+govee-h7015-bridge = "mqtt_bridge:main"
+govee-h7015-analyze = "analyze_hci:main"
 
 [tool.uv]
 conflicts = [
@@ -83,6 +77,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["standalone"]
+sources = ["standalone"]
 
 [tool.ruff]
 line-length = 100

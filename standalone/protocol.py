@@ -5,12 +5,11 @@ Implements the Govee RGBIC BLE protocol used by the H7015 Outdoor String
 Lights (and other Govee RGBIC BLE devices: H6054, H6113, H6127, H617A,
 H7020, etc.). The H7015 is Bluetooth-only — no WiFi chip, no Govee LAN API.
 
-Protocol summary (community-documented for sibling devices):
+Protocol summary (H7015 field report; items marked UNVERIFIED are not covered):
   - Service:           00010203-0405-0607-0809-0a0b0c0d1910
-  - Write char:        00010203-0405-0607-0809-0a0b0c0d2b11
-  - Read  char:        00010203-0405-0607-0809-0a0b0c0d2b10
+  - Write/notify char: 00010203-0405-0607-0809-0a0b0c0d2b11
   - Packet length:     20 bytes (zero-padded)
-  - byte[0]:           0x33 command | 0xAA keepalive | 0xA1 DIY write
+  - byte[0]:           0x33 command | 0xAA read/heartbeat | 0xA1 DIY write (UNVERIFIED)
   - byte[1]:           command type
   - byte[2..18]:       payload
   - byte[19]:          XOR checksum of bytes[0..18]
@@ -27,17 +26,17 @@ import enum
 from dataclasses import dataclass, field
 from typing import Final, final
 
-from exceptions import GoveeChecksumError, GoveeInvalidArgumentError, GoveeProtocolError
+from exceptions import GoveeChecksumError, GoveeInvalidArgumentError
 from govee_types import RGB, BulbIndex, RawPacket
 
 # ---------------------------------------------------------------------------
 # GATT endpoints (shared across the Govee RGBIC BLE family)
 # ---------------------------------------------------------------------------
 SERVICE_UUID = "00010203-0405-0607-0809-0a0b0c0d1910"
-WRITE_CHAR_UUID = "00010203-0405-0607-0809-0a0b0c0d2b11"
-READ_CHAR_UUID = "00010203-0405-0607-0809-0a0b0c0d2b10"
+WRITE_CHAR_UUID = "00010203-0405-0607-0809-0a0b0c0d2b11"  # write + notify
 
 PACKET_LEN: Final = 20
+READ_PREFIX: Final = 0xAA  # read/heartbeat frames; only AA frames carry decodable state
 KEEPALIVE_INTERVAL: Final = 2.0  # seconds; Govee app sends one every ~2s
 BULB_COUNT: Final = 15
 
@@ -59,86 +58,37 @@ class Command(enum.IntEnum):
 
 @final
 class ColorMode(enum.IntEnum):
-    """Sub-mode byte for COLOR commands (byte[2])."""
+    """Sub-command byte for COLOR (0x05) commands (byte[2])."""
 
     MUSIC = 0x01
-    MANUAL = 0x02
+    MANUAL = 0x02  # legacy; unverified on H7015
     SCENE = 0x04
     DIY = 0x0A
-    SEGMENTS = 0x0B
+    SEGMENTS = 0x0B  # V1 color (r g b maskLo maskHi); fallback for old firmware, unused
+    COLOR_V2 = 0x15  # field-validated, firmware >= 1.06
 
 
 @final
 class Scene(enum.IntEnum):
-    """Scene effect IDs (byte[3] of a COLOR/SCENE packet).
+    """Classic scene codes, sent big-endian as 33 05 04 <hi> <lo>.
 
-    The H7015 supports 47 scene modes. These IDs are inherited from the
-    H6127 reverse engineering work and may not all be valid on the H7015 —
-    confirm via HCI capture if a specific scene doesn't work.
+    Names and codes follow the app's built-in RGBIC catalogue. Wire order
+    follows the user-reported H7015 field vectors; individual scene coverage
+    in that report is partial.
     """
 
-    # Original 12 scenes (confirmed working on H6127)
-    SUNRISE = 0x00
-    SUNSET = 0x01
-    MOVIE = 0x04
-    DATING = 0x05
-    ROMANTIC = 0x07
-    TWINKLE = 0x08
-    CANDLELIGHT = 0x09
-    BREATHE = 0x0A
-    SNOWFLAKE = 0x0F
-    ENERGETIC = 0x10
-    CROSSING = 0x14
-    RAINBOW = 0x15
-
-    # Additional scenes from H6127 protocol docs (may work on H7015)
-    SNOWING = 0x02
-    CLOUD = 0x03
-    GORGEOUS = 0x06
-    BLINKING = 0x0B
-    STARRY = 0x0C
-    FLOW = 0x0D
-    DREAM = 0x0E
-    JUMPING = 0x11
-    VOLCANO = 0x12
-    RIPPLE = 0x13
-    SHADOW = 0x16
-    WIND = 0x17
-    OCEAN = 0x18
-    AURORA = 0x19
-    FOREST = 0x1A
-    WATERFALL = 0x1B
-    FIREFLY = 0x1C
-    SPARKLE = 0x1D
-    METEOR = 0x1E
-    GALAXY = 0x1F
-    SUNNY = 0x20
-    NIGHT = 0x21
-    DAWN = 0x22
-    DUSK = 0x23
-    SPRING = 0x24
-    SUMMER = 0x25
-    AUTUMN = 0x26
-    WINTER = 0x27
-    CHRISTMAS = 0x28
-    HALLOWEEN = 0x29
-    THANKSGIVING = 0x2A
-    VALENTINE = 0x2B
-    NEW_YEAR = 0x2C
-    BIRTHDAY = 0x2D
-    PARTY = 0x2E
-    RELAX = 0x2F
-    ENERGIZE = 0x30
-    FOCUS = 0x31
-    READING = 0x32
-    NIGHT_LIGHT = 0x33
-    CELEBRATE = 0x34
-    FESTIVE = 0x35
-    GRADIENT = 0x36
-    PULSE = 0x37
-    WAVE = 0x38
-    CHASE = 0x39
-    STACK = 0x3A
+    SUNRISE = 0
+    SUNSET = 1
+    MOVIE = 4
+    DATING = 5
+    ROMANTIC = 7
+    TWINKLE = 8
+    CANDLELIGHT = 9
+    BREATHE = 10
+    SNOWFLAKE = 15
+    ENERGETIC = 16
+    CROSSING = 21
+    RAINBOW = 22
 
 
 @final
@@ -152,38 +102,20 @@ class MusicMode(enum.IntEnum):
 
 
 # ---------------------------------------------------------------------------
-# Brightness mapping (0x00 = off, 0x14 = 1%, 0xFE = 100%)
+# Brightness: the H7015 byte is the raw percent 1..100 (field-validated)
 # ---------------------------------------------------------------------------
-BRIGHTNESS_MIN_RAW: Final = 0x14
-BRIGHTNESS_MAX_RAW: Final = 0xFE
+BRIGHTNESS_MIN_RAW: Final = 1
+BRIGHTNESS_MAX_RAW: Final = 100
 
 
 def brightness_to_raw(percent: int) -> int:
-    """Map 0..100 percent to the device's raw byte (0x00 / 0x14..0xFE)."""
-    if percent <= 0:
-        return 0x00
-    if percent >= 100:
-        return BRIGHTNESS_MAX_RAW
-    return int(BRIGHTNESS_MIN_RAW + (BRIGHTNESS_MAX_RAW - BRIGHTNESS_MIN_RAW) * (percent - 1) / 99)
+    """Clamp percent to the device byte 1..100 (the byte IS the percent)."""
+    return max(BRIGHTNESS_MIN_RAW, min(BRIGHTNESS_MAX_RAW, int(percent)))
 
 
 def raw_to_brightness(raw: int) -> int:
-    """Map the device's raw byte back to 0..100 percent.
-
-    Inverse of brightness_to_raw. Uses the same linear mapping so the
-    round-trip is exact (no off-by-one at the top end).
-    """
-    if raw <= 0:
-        return 0
-    if raw >= BRIGHTNESS_MAX_RAW:
-        return 100
-    if raw < BRIGHTNESS_MIN_RAW:
-        # Between 0 and 0x14 — treat as 1% (device's minimum non-off)
-        return 1
-    # Inverse of: raw = 0x14 + (0xFE - 0x14) * (percent - 1) / 99
-    # So: percent = (raw - 0x14) / (0xFE - 0x14) * 99 + 1
-    percent = round((raw - BRIGHTNESS_MIN_RAW) / (BRIGHTNESS_MAX_RAW - BRIGHTNESS_MIN_RAW) * 99) + 1
-    return max(1, min(100, percent))
+    """Read-side inverse: the byte is the percent, clamped to 0..100."""
+    return max(0, min(BRIGHTNESS_MAX_RAW, raw))
 
 
 # ---------------------------------------------------------------------------
@@ -236,14 +168,17 @@ def pkt_power(on: bool) -> RawPacket:
 
 
 def pkt_brightness(percent: int) -> RawPacket:
-    """Build a brightness packet. percent is 0..100."""
+    """Brightness packet; percent is clamped to 1..100 (use pkt_power for off)."""
     return build_packet(b"\x33\x04", bytes([brightness_to_raw(percent)]))
 
 
+def _color_v2(rgb: RGB, mask: tuple[int, int]) -> RawPacket:
+    return build_packet(b"\x33\x05", bytes([ColorMode.COLOR_V2, 0x01, *rgb, *mask]))
+
+
 def pkt_solid_color(r: int, g: int, b: int) -> RawPacket:
-    """Build a solid-color packet. r, g, b are 0..255 (clamped)."""
-    rgb = _clamp_rgb((r, g, b))
-    return build_packet(b"\x33\x05", bytes([ColorMode.MANUAL, *rgb]))
+    """Solid color on all segments (V2, firmware >= 1.06): 33 05 15 01 r g b FF 7F."""
+    return _color_v2(_clamp_rgb((r, g, b)), _segment_mask(tuple(range(BULB_COUNT))))
 
 
 def pkt_warm_white() -> RawPacket:
@@ -253,8 +188,8 @@ def pkt_warm_white() -> RawPacket:
     fixed palette bytes (0xFF 0xAE 0x54) inherited from the H6127 capture.
     Intensity is controlled by the brightness command, not this packet.
 
-    NOTE: The warm-white palette bytes should be confirmed via HCI capture
-    for the H7015 specifically.
+    NOTE: UNVERIFIED. Legacy 0x02 manual sub-command with palette bytes from an
+    H6127 capture; the H7015 field report does not cover white.
     """
     return build_packet(
         b"\x33\x05",
@@ -270,10 +205,9 @@ def pkt_color_temperature(kelvin: int) -> RawPacket:
     byte[6]) to switch from RGB to white LEDs, then encodes the warm/cold
     mix in bytes 7-8.
 
-    NOTE: The exact encoding of kelvin → warm/cold bytes is inherited from
-    the H6127 protocol docs ("the slider within the app UI uses a list of
-    hardcoded color codes"). This is a best-effort linear interpolation.
-    Confirm via HCI capture for the H7015.
+    NOTE: UNVERIFIED. Not covered by the H7015 field report; the legacy 0x02
+    manual sub-command and the kelvin -> warm/cold encoding come from H6127
+    docs and the interpolation is a best-effort guess.
     """
     # Clamp to the H7015's supported range (2700K-6500K per Amazon listing)
     k = max(2000, min(6500, int(kelvin)))
@@ -293,7 +227,7 @@ def pkt_color_temperature(kelvin: int) -> RawPacket:
         warm = int(0xFF * (1 - ratio))
         cold = int(0xFF * ratio)
 
-    # Byte layout: 0x33, 0x05, 0x02 (manual), 0x00 0x00 0x00 (RGB ignored),
+    # Byte layout: 0x33, 0x05, 0x02 (legacy manual), 0x00 0x00 0x00 (RGB ignored),
     # 0x01 (white LED flag), warm, cold
     return build_packet(
         b"\x33\x05",
@@ -302,7 +236,8 @@ def pkt_color_temperature(kelvin: int) -> RawPacket:
 
 
 def pkt_scene(scene: Scene) -> RawPacket:
-    return build_packet(b"\x33\x05", bytes([ColorMode.SCENE, scene.value]))
+    """Classic scene: 33 05 04 <code high> <code low> (big-endian u16)."""
+    return build_packet(b"\x33\x05", bytes([ColorMode.SCENE, *scene.value.to_bytes(2, "big")]))
 
 
 def pkt_music(mode: MusicMode, r: int = 0, g: int = 0, b: int = 0) -> RawPacket:
@@ -315,19 +250,10 @@ def pkt_gradient(on: bool) -> RawPacket:
 
 
 def pkt_segment(bulb: BulbIndex, r: int, g: int, b: int) -> RawPacket:
-    """Set a single bulb's color.
-
-    The H7015's per-bulb encoding may differ from the H6127 bitmask layout
-    used here — confirm via HCI capture and patch this function.
-    """
+    """Set a single bulb's color (V2: 33 05 15 01 r g b maskLo maskHi)."""
     if not 0 <= bulb < BULB_COUNT:
         raise GoveeInvalidArgumentError(f"bulb index must be 0..{BULB_COUNT - 1}, got {bulb}")
-    rgb = _clamp_rgb((r, g, b))
-    left, right = _bulb_to_bitmask(bulb)
-    return build_packet(
-        b"\x33\x05",
-        bytes([ColorMode.SEGMENTS, *rgb, left, right]),
-    )
+    return _color_v2(_clamp_rgb((r, g, b)), _segment_mask((bulb,)))
 
 
 def pkt_multi_segment(pairs: list[tuple[BulbIndex, int, int, int]]) -> list[RawPacket]:
@@ -465,15 +391,12 @@ def _clamp_rgb(rgb: tuple[int, int, int]) -> RGB:
     return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
 
 
-def _bulb_to_bitmask(bulb: int) -> tuple[int, int]:
-    """Map bulb index 0..14 to (left_byte, right_byte) per H6127 layout.
-
-    H6127 splits 15 segments into left byte (segments 1-8) and right byte
-    (segments 9-15). One bit set per bulb.
-    """
-    if bulb < 8:
-        return (1 << bulb, 0x00)
-    return (0x00, 1 << (bulb - 8))
+def _segment_mask(bulbs: tuple[int, ...]) -> tuple[int, int]:
+    """Return (maskLo, maskHi) for 0-based bulb indices; maskHi keeps bit 15 clear."""
+    mask = 0
+    for bulb in bulbs:
+        mask |= 1 << bulb
+    return (mask & 0xFF, (mask >> 8) & 0x7F)
 
 
 # ---------------------------------------------------------------------------
@@ -481,7 +404,7 @@ def _bulb_to_bitmask(bulb: int) -> tuple[int, int]:
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True, slots=True)
 class H7015State:
-    """Last-known device state (read from the read characteristic)."""
+    """Last-known device state (decoded from AA read frames)."""
 
     power: bool | None = None
     brightness: int | None = None  # 0..100 percent
@@ -491,43 +414,19 @@ class H7015State:
 
 
 def decode_state(raw: bytes) -> H7015State:
-    """Best-effort decode of the read characteristic.
+    """Decode a checksum-valid 20-byte AA read frame (power / brightness only).
 
-    The H7015's exact state format isn't publicly documented; this is a
-    placeholder based on the H6127 format. Update after capturing real
-    H7015 state frames.
+    Command acknowledgments (0x33 ...), AB responses and anything malformed
+    are never state: they come back as an empty state carrying only ``raw``.
+    The AB layout is unverified, so it is deliberately not decoded.
     """
-    if not raw or len(raw) < 3 or raw[0] != 0x33:
+    if len(raw) != PACKET_LEN or raw[0] != READ_PREFIX or checksum(raw[:-1]) != raw[-1]:
         return H7015State(raw=raw)
-
-    cmd = raw[1]
-    return _decode_by_command(cmd, raw)
-
-
-def _decode_by_command(cmd: int, raw: bytes) -> H7015State:
-    """Dispatch on command byte using match.
-
-    Raises GoveeProtocolError if the packet is too short for its command type.
-    """
-    match cmd:
+    match raw[1]:
         case Command.POWER:
-            if len(raw) < 3:
-                raise GoveeProtocolError(f"power packet too short: {len(raw)} bytes")
             return H7015State(power=bool(raw[2]), raw=raw)
         case Command.BRIGHTNESS:
-            if len(raw) < 3:
-                raise GoveeProtocolError(f"brightness packet too short: {len(raw)} bytes")
             return H7015State(brightness=raw_to_brightness(raw[2]), raw=raw)
-        case Command.COLOR:
-            if len(raw) < 6:
-                raise GoveeProtocolError(f"color packet too short: {len(raw)} bytes")
-            # Only extract RGB for manual mode (0x02). For scene/music/segment
-            # modes, byte 3 is a scene ID or music mode, not red.
-            sub_mode = raw[2]
-            if sub_mode == ColorMode.MANUAL:
-                return H7015State(rgb=(raw[3], raw[4], raw[5]), raw=raw)
-            # For scene/music/segment modes, don't report bogus RGB
-            return H7015State(raw=raw)
         case _:
             return H7015State(raw=raw)
 
@@ -538,7 +437,6 @@ __all__ = [
     "BULB_COUNT",
     "KEEPALIVE_INTERVAL",
     "PACKET_LEN",
-    "READ_CHAR_UUID",
     "SERVICE_UUID",
     "WRITE_CHAR_UUID",
     "ColorMode",

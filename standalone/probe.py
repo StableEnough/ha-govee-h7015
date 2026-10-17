@@ -224,9 +224,15 @@ async def main() -> None:
         await client.disconnect()
 
 
-if __name__ == "__main__":
+def cli() -> int:
+    """Run the asynchronous probe as a console-script entry point."""
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nInterrupted.")
-        sys.exit(130)
+        return 130
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(cli())

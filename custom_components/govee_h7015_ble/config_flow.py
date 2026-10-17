@@ -12,13 +12,15 @@ from homeassistant.components.bluetooth import (
     async_discovered_service_info,
 )
 from homeassistant.const import CONF_MAC, CONF_NAME
+from homeassistant.core import callback
 
 from homeassistant import config_entries
 
 from .const import DEFAULT_NAME, DOMAIN
+from .options_flow import H7015OptionsFlow
 
 if TYPE_CHECKING:
-    from homeassistant.config_entries import ConfigFlowResult
+    from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,6 +59,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Govee H7015 BLE."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> H7015OptionsFlow:
+        """Return the options handler through HA's config-flow hook."""
+        return H7015OptionsFlow()
 
     def __init__(self) -> None:
         self._discovered: dict[str, BluetoothServiceInfoBleak] = {}

@@ -303,7 +303,7 @@ class GoveeH7015BulbCard extends HTMLElement {
 
     // Build preset buttons HTML
     const presetButtons = Object.entries(PRESETS).map(([key, preset]) =>
-      `<div class="preset-btn" data-preset="${key}">${preset.name}</div>`
+      `<button type="button" class="preset-btn" data-preset="${key}" ${this._applyingPreset ? "disabled" : ""}>${preset.name}</button>`
     ).join("");
 
     this.shadowRoot.innerHTML = `
@@ -411,7 +411,11 @@ class GoveeH7015BulbCard extends HTMLElement {
           font-size: 0.85em;
           border: 1px solid var(--divider-color);
         }
-        .preset-btn:hover {
+        .preset-btn:disabled {
+          opacity: 0.5;
+          cursor: wait;
+        }
+        .preset-btn:not(:disabled):hover {
           background: var(--primary-color);
           color: white;
         }
@@ -526,6 +530,7 @@ class GoveeH7015BulbCard extends HTMLElement {
     `;
 
     this.attachListeners(deviceId, entityId);
+    this.showStatus(this._status || "");
   }
 
   attachListeners(deviceId, entityId) {
@@ -548,7 +553,7 @@ class GoveeH7015BulbCard extends HTMLElement {
       colorInput.addEventListener("change", (e) => {
         if (this.selectedBulb === null) return;
         const rgb = hexToRgb(e.target.value);
-        this.callSetBulb(deviceId, this.selectedBulb, rgb);
+        this.callSetBulb(deviceId, this.selectedBulb, rgb).catch(() => {});
       });
     }
 
@@ -606,7 +611,7 @@ class GoveeH7015BulbCard extends HTMLElement {
     }
   }
 
-  callSetBulb(deviceId, bulb, rgb) {
+  async callSetBulb(deviceId, bulb, rgb) {
     // Store old color for rollback on error
     const oldColor = this.bulbColors[bulb] ? [...this.bulbColors[bulb]] : null;
 
@@ -617,51 +622,49 @@ class GoveeH7015BulbCard extends HTMLElement {
       bulbEl.style.background = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
     }
 
-    // Fire and forget — but revert on error
-    this._hass.callService("govee_h7015_ble", "set_bulb", {
-      bulb: bulb,
-      rgb: rgb,
-      device_id: [deviceId],
-    }).catch((err) => {
+    try {
+      await this._hass.callService("govee_h7015_ble", "set_bulb", {
+        bulb: bulb,
+        rgb: rgb,
+        device_id: [deviceId],
+      });
+    } catch (err) {
       // Revert optimistic update on failure
       if (oldColor) {
         this.bulbColors[bulb] = oldColor;
       } else {
         delete this.bulbColors[bulb];
       }
-      if (bulbEl) {
+      const currentBulb = this.shadowRoot.querySelector(`.bulb[data-bulb="${bulb}"]`);
+      if (currentBulb) {
         const c = oldColor || [60, 60, 60];
-        bulbEl.style.background = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+        currentBulb.style.background = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
       }
       this.showStatus(`✗ Failed to set bulb ${bulb + 1}: ${err.message || err}`);
-    });
+      throw err;
+    }
   }
 
-  applyPreset(deviceId, presetKey) {
+  async applyPreset(deviceId, presetKey) {
+    if (this._applyingPreset) return;
     const preset = PRESETS[presetKey];
     if (!preset) return;
 
-    // Disable preset buttons during application to prevent overlap
     this._applyingPreset = true;
-    this.shadowRoot.querySelectorAll(".preset-btn").forEach((btn) => {
-      btn.style.opacity = "0.5";
-      btn.style.pointerEvents = "none";
-    });
-
+    this.render();
     this.showStatus(`Applying ${preset.name}...`);
-
-    const colors = preset.colors();
-    for (let i = 0; i < 15; i++) {
-      setTimeout(() => {
-        this.callSetBulb(deviceId, i, colors[i]);
-        if (i === 14) {
-          setTimeout(() => {
-            this.showStatus(`${preset.name} applied ✓`);
-            this._applyingPreset = false;
-            this.render(); // full re-render after preset completes
-          }, 150);
-        }
-      }, i * 80);
+    try {
+      const colors = preset.colors();
+      for (let i = 0; i < 15; i++) {
+        await this.callSetBulb(deviceId, i, colors[i]);
+        if (i < 14) await new Promise((resolve) => setTimeout(resolve, 80));
+      }
+      this.showStatus(`${preset.name} applied ✓`);
+    } catch (err) {
+      this.showStatus(`✗ ${preset.name} stopped: ${err.message || err}`);
+    } finally {
+      this._applyingPreset = false;
+      this.render();
     }
   }
 
@@ -693,6 +696,7 @@ class GoveeH7015BulbCard extends HTMLElement {
   }
 
   showStatus(msg) {
+    this._status = msg;
     const el = this.shadowRoot.querySelector("#status-msg");
     if (el) {
       el.textContent = msg;

@@ -19,7 +19,7 @@ from models import (  # type: ignore[import-not-found]
     DeviceConfig,
     DeviceState,
     SegmentCommand,
-    parse_command,
+    parse_commands,
 )
 from pydantic import ValidationError
 
@@ -30,7 +30,7 @@ st_rgb = st.tuples(
     st.integers(min_value=0, max_value=255),
 )
 st_brightness_pct = st.integers(min_value=0, max_value=100)
-st_brightness_ha = st.integers(min_value=0, max_value=255)
+st_brightness_ha = st.integers(min_value=0, max_value=100)
 st_bulb = st.integers(min_value=0, max_value=14)
 st_mac_byte = st.text(
     alphabet=st.characters(min_codepoint=ord("A"), max_codepoint=ord("F"))
@@ -41,36 +41,35 @@ st_mac_byte = st.text(
 
 
 class TestParseCommandRoundTrip:
-    """parse_command should round-trip: valid input -> typed command."""
+    """Valid input should round-trip through typed commands."""
 
     @given(st_brightness_pct)
     def test_brightness_round_trip(self, pct: int) -> None:
-        cmd = parse_command(json.dumps({"cmd": "brightness", "value": pct}).encode())
+        cmd = parse_commands(json.dumps({"cmd": "brightness", "value": pct}).encode())[0]
         assert isinstance(cmd, BrightnessCommand)
         assert cmd.value == pct
 
     @given(st_rgb)
     def test_color_round_trip(self, rgb: tuple[int, int, int]) -> None:
         r, g, b = rgb
-        cmd = parse_command(json.dumps({"cmd": "color", "r": r, "g": g, "b": b}).encode())
+        cmd = parse_commands(json.dumps({"cmd": "color", "r": r, "g": g, "b": b}).encode())[0]
         assert isinstance(cmd, ColorCommand)
         assert (cmd.r, cmd.g, cmd.b) == rgb
 
     @given(st_bulb, st_rgb)
     def test_segment_round_trip(self, bulb: int, rgb: tuple[int, int, int]) -> None:
         r, g, b = rgb
-        cmd = parse_command(
+        cmd = parse_commands(
             json.dumps({"cmd": "segment", "bulb": bulb, "r": r, "g": g, "b": b}).encode()
-        )
+        )[0]
         assert isinstance(cmd, SegmentCommand)
         assert cmd.bulb == bulb
 
     @given(st_brightness_ha)
-    def test_ha_brightness_scales_correctly(self, ha_b: int) -> None:
-        cmd = parse_command(json.dumps({"brightness": ha_b}).encode())
+    def test_ha_brightness_matches_advertised_scale(self, ha_b: int) -> None:
+        cmd = parse_commands(json.dumps({"brightness": ha_b}).encode())[0]
         assert isinstance(cmd, BrightnessCommand)
-        expected = int(ha_b * 100 / 255)
-        assert cmd.value == expected
+        assert cmd.value == ha_b
         assert 0 <= cmd.value <= 100
 
 

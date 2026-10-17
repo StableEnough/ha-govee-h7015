@@ -10,7 +10,10 @@ For runtime-validated models, see models.py (pydantic).
 
 from __future__ import annotations
 
-from typing import NewType, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, NewType, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # ---------------------------------------------------------------------------
 # NewType — compile-time type safety (no runtime validation)
@@ -49,7 +52,9 @@ class BleClient(Protocol):
 
     async def write_gatt_char(self, char_uuid: str, data: bytes, *, response: bool) -> None: ...
 
-    async def read_gatt_char(self, char_uuid: str) -> bytes: ...
+    async def start_notify(
+        self, char_uuid: str, callback: Callable[[Any, bytearray], Any]
+    ) -> None: ...
 
 
 # ---------------------------------------------------------------------------

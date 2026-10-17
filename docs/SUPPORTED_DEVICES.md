@@ -1,24 +1,22 @@
 # Govee H7015 BLE — Supported Devices
 
-## Confirmed Working
+## Target Device
 
 | Model | Name | Protocol | Notes |
 |-------|------|----------|-------|
-| H7015 | Govee Outdoor String Lights (48ft, 15 bulbs) | BLE only | Primary target. 47 scene modes, RGBIC, warm/cold white. |
+| H7015 | Govee Outdoor String Lights (48ft, 15 bulbs) | BLE only | Reported field-tested power, raw-percent brightness, and V2 RGB (firmware ≥1.06.00); segment masks and classic scenes have partial field coverage. |
 
-## Likely Working (Same Protocol Family)
+The integration's corrected packets match a user-provided H7015 hardware-test
+report. Automated tests use simulated BLE and do not independently confirm
+hardware behavior. White-temperature, music, gradient, and DIY commands remain
+unverified.
 
-These devices share the Govee RGBIC BLE protocol (`00010203-0405-0607-0809-0a0b0c0d1910`).
-They may work with this integration, but the config flow only auto-discovers `H7015_*` devices.
-To try another model, add it manually by MAC address.
+## Other Models Are Not Verified
 
-| Model | Name | Differences |
-|-------|------|-------------|
-| H7020 | Govee Outdoor String Lights 2 | WiFi + BLE (BLE fallback when WiFi fails) |
-| H6054 | Govee LED Strip | Different segment count |
-| H6113 | Govee LED Strip | Different segment count |
-| H6127 | Govee LED Strip | Protocol was reverse-engineered from this model |
-| H617A | Govee LED Strip | Community-confirmed working |
+Matching GATT UUIDs do not establish compatible brightness units, scene codes,
+or segment encodings. The corrected defaults are H7015-specific; do not assume
+they work on H6127, H617A, H7020, or other Govee devices. Older community captures
+from those models are reference material, not confirmation of H7015 behavior.
 
 ## Not Compatible
 
@@ -34,7 +32,7 @@ These Govee devices use different protocols and will NOT work with this integrat
 
 If you have a Govee BLE device that's not listed:
 
-1. Run `python standalone/scan.py --all` to find its advertised name
-2. If the name starts with `H` followed by 4 digits, it likely uses the same protocol
-3. Add it manually via the integration's config flow (enter MAC address)
-4. Report results in a GitHub issue with the `[PROTOCOL]` template
+1. Identify the exact model and firmware version.
+2. Capture the official app's BLE command packets for that model.
+3. Compare brightness units, scene byte order, and segment encoding.
+4. Report redacted captures and observed hardware behavior with the proposed change.

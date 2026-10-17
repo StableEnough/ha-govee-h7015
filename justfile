@@ -12,7 +12,7 @@ default:
 # to run standalone/mqtt_bridge.py for real.
 setup:
     curl -LsSf https://astral.sh/uv/install.sh | sh
-    uv sync --extra dev --extra test-ha --extra analyze
+    uv sync --locked --extra dev --extra test-ha --extra analyze
 
 # Run the protocol test suite
 test:
@@ -64,9 +64,9 @@ bridge:
 docker:
     cd docker && docker compose build
 
-# Validate HACS + hassfest (requires network)
-validate-hacs:
-    act -W .github/workflows/validate.yml
+# Validate the HA integration with the same container as Forgejo CI (requires Docker/network)
+validate-hassfest:
+    docker run --rm -v "{{justfile_directory()}}:/github/workspace" ghcr.io/home-assistant/hassfest:latest
 
 # Clean build artifacts
 clean:

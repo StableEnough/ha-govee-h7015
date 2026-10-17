@@ -1,0 +1,156 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: docker
+    container: ghcr.io/astral-sh/uv:python3.13-bookworm
+    env:
+      PYTHONPATH: standalone:.
+    steps:
+      # JavaScript actions need Node inside the Python job container.
+      - name: Install action runtime
+        run: apt-get update && apt-get install -y --no-install-recommends nodejs
+      - uses: https://github.com/actions/checkout@v4
+        with:
+          persist-credentials: false
+      # bridge and test-ha are mutually exclusive; MQTT tests stub aiomqtt.
+      - name: Install locked development dependencies
+        run: uv sync --locked --extra dev --extra test-ha --extra analyze
+      - name: Lint
+        run: uv run --no-sync ruff check .
+      - name: Check formatting
+        run: uv run --no-sync ruff format --check .
+      - name: Type-check
+        # Preserve the existing CI's best-effort type-check policy.
+        continue-on-error: true
+        run: uv run --no-sync mypy --strict standalone
+      - name: Check Lovelace card syntax
+        run: node --check frontend/govee-h7015-bulb-card.js
+      - name: Test HA integration, MQTT bridge, and protocol properties
+        run: uv run --no-sync pytest tests/ -v --hypothesis-show-statistics
+
+  package:
+    runs-on: docker
+    container: ghcr.io/astral-sh/uv:python3.13-bookworm
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install the wheel and smoke-test installed commands
+        run: |
+          uv sync --locked --no-editable --extra bridge --extra analyze
+          python - <<'PY'
+          import os
+          import subprocess
+          import tempfile
+          from pathlib import Path
+
+          root = Path.cwd()
+          env = os.environ.copy()
+          env.pop("PYTHONPATH", None)
+          env["PYTHONWARNINGS"] = "error"
+          with tempfile.TemporaryDirectory() as outside:
+              for command in (
+                  "govee-h7015-scan",
+                  "govee-h7015-probe",
+                  "govee-h7015-bridge",
+                  "govee-h7015-analyze",
+              ):
+                  subprocess.run(
+                      [str(root / ".venv" / "bin" / command), "--help"],
+                      cwd=outside,
+                      env=env,
+                      check=True,
+                  )
+          PY
+
+  hassfest:
+    runs-on: docker
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+        with:
+          persist-credentials: false
+      # Run the validator as an action container, not a nested docker run.
+      - name: Validate Home Assistant integration
+        uses: docker://ghcr.io/home-assistant/hassfest:latest
+
+  secrets:
+    runs-on: docker
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan Git history for secrets
+        uses: docker://ghcr.io/gitleaks/gitleaks:v8.24.2
+        with:
+          args: git --redact .
+      - name: Scan current files for secrets
+        uses: docker://ghcr.io/gitleaks/gitleaks:v8.24.2
+        with:
+          args: dir --redact .
+
+  release:
+    if: forgejo.event_name == 'push' && startsWith(forgejo.ref, 'refs/tags/v')
+    needs: [test, hassfest, secrets]
+    runs-on: docker
+    container: ghcr.io/astral-sh/uv:python3.13-bookworm
+    steps:
+      - name: Install action runtime
+        run: apt-get update && apt-get install -y --no-install-recommends nodejs curl jq
+      - uses: https://github.com/actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate release version
+        env:
+          RELEASE_TAG: ${{ forgejo.ref_name }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import tomllib
+          from pathlib import Path
+
+          version = os.environ["RELEASE_TAG"].removeprefix("v")
+          manifest = json.loads(Path("custom_components/govee_h7015_ble/manifest.json").read_text())["version"]
+          project = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          if manifest != version or project != version:
+              raise SystemExit(f"Version mismatch: tag={version}, manifest={manifest}, project={project}")
+          print(f"Release version: {version}")
+          PY
+      - name: Package integration for manual installation
+        run: |
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          Path("dist/release").mkdir(parents=True, exist_ok=True)
+          with zipfile.ZipFile("dist/release/govee_h7015_ble.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+              for path in sorted(Path("custom_components/govee_h7015_ble").rglob("*")):
+                  if path.is_file() and "__pycache__" not in path.parts:
+                      archive.write(path)
+          PY
+      - name: Publish Forgejo release
+        uses: https://code.forgejo.org/actions/forgejo-release@v2.7.2
+        with:
+          url: ${{ forgejo.server_url }}
+          repo: ${{ forgejo.repository }}
+          tag: ${{ forgejo.ref_name }}
+          sha: ${{ forgejo.sha }}
+          token: ${{ forgejo.token }}
+          direction: upload
+          release-dir: dist/release
+          release-notes: |
+            See CHANGELOG.md in the tagged source for release details.
+
+            Manual installation: extract govee_h7015_ble.zip into your Home
+            Assistant configuration directory and restart Home Assistant.
+            HACS distribution requires a separate GitHub mirror; it cannot
+            install directly from this Forgejo release.

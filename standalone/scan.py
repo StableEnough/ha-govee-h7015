@@ -71,8 +71,13 @@ async def main() -> None:
     print("\nPass the MAC to probe.py or mqtt_bridge.py.")
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """Run the asynchronous scanner as a console-script entry point."""
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nStopped.")
+
+
+if __name__ == "__main__":
+    cli()

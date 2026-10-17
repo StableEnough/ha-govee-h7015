@@ -1,11 +1,7 @@
 """Mock BLE client for testing without real hardware.
 
-Provides a fake BLE client that simulates the H7015's behavior, so the
-integration can be tested without owning the device. Useful for:
-- Testing the Lovelace card UI
-- CI testing of the full integration
-- Demoing the integration to potential users
-- Developing new features without BLE access
+Provides a fake BLE client for integration tests without a radio. Its state
+model is a test convenience, not independently verified hardware behavior.
 
 Usage in tests:
     from tests.mock_h7015 import MockH7015Client
@@ -25,14 +21,12 @@ _LOGGER = logging.getLogger(__name__)
 
 # GATT endpoints (same as real device)
 WRITE_CHAR_UUID = "00010203-0405-0607-0809-0a0b0c0d2b11"
-READ_CHAR_UUID = "00010203-0405-0607-0809-0a0b0c0d2b10"
 
 
 class MockH7015Client:
-    """Simulates the H7015 BLE device for testing.
+    """Model command handling and notification delivery for software tests.
 
-    Tracks internal state (power, brightness, color) and responds to
-    read/write GATT characteristic operations just like the real device.
+    The mock does not establish which responses physical H7015 firmware emits.
     """
 
     def __init__(self, _ble_device: Any = None) -> None:
@@ -42,6 +36,8 @@ class MockH7015Client:
         self._rgb: tuple[int, int, int] = (255, 255, 255)
         self._mode = 0x02  # manual
         self._write_count = 0
+        self._notify_callback: Any = None
+        self.events: list[str] = []
 
     @property
     def is_connected(self) -> bool:
@@ -57,13 +53,14 @@ class MockH7015Client:
         self._connected = False
 
     async def write_gatt_char(self, char_uuid: str, data: bytes, *, response: bool = True) -> None:
-        """Process a write just like the real H7015 would."""
+        """Model supported command fields without generating hardware readback."""
         if not self._connected:
             raise ConnectionError("not connected")
         if char_uuid != WRITE_CHAR_UUID:
             return
 
         self._write_count += 1
+        self.events.append("write")
         _LOGGER.debug("MockH7015: RX %s (write #%d)", data.hex(), self._write_count)
 
         if len(data) < 3:
@@ -90,13 +87,17 @@ class MockH7015Client:
 
         elif cmd == 0x05:  # Color
             sub_mode = data[2]
-            if sub_mode == 0x02 and len(data) >= 6:  # Manual
+            if sub_mode == 0x15 and len(data) == 20 and data[3] == 0x01:
+                self._mode = 0x15
+                if data[7:9] == b"\xff\x7f":
+                    self._rgb = (data[4], data[5], data[6])
+            elif sub_mode == 0x02 and len(data) >= 6:  # Legacy, unverified
                 self._mode = 0x02
                 self._rgb = (data[3], data[4], data[5])
                 _LOGGER.debug("MockH7015: color=rgb(%d,%d,%d)", *self._rgb)
             elif sub_mode == 0x04:  # Scene
                 self._mode = 0x04
-                _LOGGER.debug("MockH7015: scene=0x%02x", data[3])
+                _LOGGER.debug("MockH7015: scene=%d", int.from_bytes(data[3:5], "big"))
             elif sub_mode == 0x01:  # Music
                 self._mode = 0x01
                 _LOGGER.debug("MockH7015: music=0x%02x", data[3])
@@ -107,29 +108,19 @@ class MockH7015Client:
         elif cmd == 0x14:  # Gradient
             _LOGGER.debug("MockH7015: gradient=%s", bool(data[2]))
 
-    async def read_gatt_char(self, char_uuid: str) -> bytes:
-        """Return a state packet mimicking the real device's read characteristic."""
+    async def start_notify(self, char_uuid: str, callback: Any) -> None:
+        """Record a notification subscription (only the write/notify char exists)."""
         if not self._connected:
             raise ConnectionError("not connected")
-        if char_uuid != READ_CHAR_UUID:
-            return b""
+        if char_uuid != WRITE_CHAR_UUID:
+            raise ValueError(f"no notify characteristic {char_uuid}")
+        self._notify_callback = callback
+        self.events.append("start_notify")
 
-        # Build a state response based on current mode
-        if self._mode == 0x02:  # manual
-            raw = bytes([0x33, 0x05, 0x02, *self._rgb]) + b"\x00" * 13
-        elif self._mode == 0x04:  # scene
-            raw = bytes([0x33, 0x05, 0x04, 0x00]) + b"\x00" * 15
-        else:
-            raw = bytes([0x33, 0x01, 0x01 if self._power else 0x00]) + b"\x00" * 16
-
-        # Add checksum
-        checksum = 0
-        for b in raw:
-            checksum ^= b
-        raw += bytes([checksum])
-
-        _LOGGER.debug("MockH7015: TX %s", raw.hex())
-        return raw
+    def notify(self, data: bytes) -> None:
+        """Deliver a device-originated notification frame to the subscriber."""
+        assert self._notify_callback is not None, "not subscribed"
+        self._notify_callback(None, bytearray(data))
 
     @property
     def mock_power(self) -> bool:

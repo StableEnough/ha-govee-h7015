@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import dataclasses
 import logging
+import time
 from typing import TYPE_CHECKING, Final
 
 try:
@@ -28,7 +29,6 @@ from exceptions import (  # type: ignore[import-not-found]
 from govee_types import BulbIndex, MacAddress  # type: ignore[import-not-found]
 from protocol import (  # type: ignore[import-not-found]
     KEEPALIVE_INTERVAL,
-    READ_CHAR_UUID,
     WRITE_CHAR_UUID,
     H7015State,
     MusicMode,
@@ -55,6 +55,7 @@ LOGGER = logging.getLogger("govee_h7015")
 BLE_OP_TIMEOUT: Final = 10.0
 BLE_CONNECT_TIMEOUT: Final = 20.0
 RECONNECT_MAX_ATTEMPTS: Final = 10
+WRITE_GAP: Final = 0.08  # spec write_pacing minimum gap
 
 
 class GoveeH7015Client:
@@ -85,10 +86,13 @@ class GoveeH7015Client:
         self.state_callback = state_callback
         self._client: BleakClient | None = None  # type: ignore[assignment]
         self._keepalive_task: asyncio.Task[None] | None = None
+        self._reconnect_task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
         self._state: H7015State = H7015State()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._intentional_disconnect = False
+        self._last_write = float("-inf")
+        self._notify_tasks: set[asyncio.Future[None]] = set()
 
     @property
     def state(self) -> H7015State:
@@ -118,6 +122,7 @@ class GoveeH7015Client:
         """Connect to the device and start the keepalive task."""
         LOGGER.info("Connecting to %s", self.address)
         self._loop = asyncio.get_running_loop()
+        self._intentional_disconnect = False
         self._client = BleakClient(
             self.address, timeout=timeout, disconnected_callback=self._on_disconnect
         )
@@ -125,10 +130,21 @@ class GoveeH7015Client:
             async with asyncio.timeout(timeout):
                 await self._client.connect()
             await asyncio.sleep(0.2)  # service-discovery quirk
-        except TimeoutError as exc:
-            raise GoveeTimeoutError(f"connect timed out after {timeout}s") from exc
-        except BleakError as exc:
-            raise GoveeConnectionError(f"BLE connect failed: {exc}") from exc
+            # Subscribe before any write (spec).
+            async with asyncio.timeout(BLE_OP_TIMEOUT):
+                await self._client.start_notify(WRITE_CHAR_UUID, self._on_notify)
+        except BaseException as exc:
+            self._intentional_disconnect = True
+            client, self._client = self._client, None
+            if client is not None:
+                with contextlib.suppress(Exception):
+                    async with asyncio.timeout(BLE_OP_TIMEOUT):
+                        await client.disconnect()
+            if isinstance(exc, TimeoutError):
+                raise GoveeTimeoutError(f"connect/subscribe timed out after {timeout}s") from exc
+            if isinstance(exc, BleakError):
+                raise GoveeConnectionError(f"BLE connect failed: {exc}") from exc
+            raise
 
         if self.keepalive_enabled:
             self._keepalive_task = asyncio.create_task(self._keepalive_loop())
@@ -137,6 +153,11 @@ class GoveeH7015Client:
     async def disconnect(self) -> None:
         """Cancel keepalive and disconnect."""
         self._intentional_disconnect = True
+        if self._reconnect_task:
+            self._reconnect_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reconnect_task
+            self._reconnect_task = None
         if self._keepalive_task:
             self._keepalive_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -144,9 +165,13 @@ class GoveeH7015Client:
             self._keepalive_task = None
         if self._client and self._client.is_connected:
             with contextlib.suppress(Exception):  # pragma: no cover
-                await self._client.disconnect()
+                async with asyncio.timeout(BLE_OP_TIMEOUT):
+                    await self._client.disconnect()
         self._client = None
-        self._intentional_disconnect = False
+        tasks = self._notify_tasks - {asyncio.current_task()}
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         LOGGER.info("Disconnected")
 
     def _on_disconnect(self, _client: BleakClient) -> None:
@@ -157,11 +182,17 @@ class GoveeH7015Client:
         LOGGER.warning("Device disconnected: %s", self.address)
         if not self.reconnect_enabled:
             return
-        # bleak callbacks fire off-loop — must use run_coroutine_threadsafe.
+        # Schedule task ownership on the loop, even when bleak calls from a thread.
         if self._loop and self._loop.is_running():
-            asyncio.run_coroutine_threadsafe(self._reconnect_loop(), self._loop)
+            self._loop.call_soon_threadsafe(self._start_reconnect)
         else:
             LOGGER.error("No running event loop; cannot auto-reconnect")
+
+    def _start_reconnect(self) -> None:
+        if not self._intentional_disconnect and (
+            self._reconnect_task is None or self._reconnect_task.done()
+        ):
+            self._reconnect_task = asyncio.create_task(self._reconnect_loop())
 
     async def _reconnect_loop(self) -> None:
         """Exponential-backoff reconnect, up to RECONNECT_MAX_ATTEMPTS tries."""
@@ -197,7 +228,7 @@ class GoveeH7015Client:
                 if self._client and self._client.is_connected:
                     try:
                         async with asyncio.timeout(BLE_OP_TIMEOUT):
-                            await self._write(pkt_keepalive(), response=False)
+                            await self._write(pkt_keepalive())
                     except TimeoutError:
                         LOGGER.warning("keepalive timed out — connection may be dead")
                         await self._teardown_for_reconnect()
@@ -223,7 +254,13 @@ class GoveeH7015Client:
             LOGGER.debug("TX %s", data.hex())
             try:
                 async with asyncio.timeout(BLE_OP_TIMEOUT):
-                    await self._client.write_gatt_char(WRITE_CHAR_UUID, data, response=response)
+                    wait = WRITE_GAP - (time.monotonic() - self._last_write)
+                    if wait > 0:
+                        await asyncio.sleep(wait)
+                    try:
+                        await self._client.write_gatt_char(WRITE_CHAR_UUID, data, response=response)
+                    finally:
+                        self._last_write = time.monotonic()
             except TimeoutError as exc:
                 raise GoveeTimeoutError(f"write timed out after {BLE_OP_TIMEOUT}s") from exc
             except BleakError as exc:
@@ -247,12 +284,15 @@ class GoveeH7015Client:
         await self.power_on() if on else await self.power_off()
 
     async def set_brightness(self, percent: int) -> None:
-        await self._write(pkt_brightness(percent))
-        self._state = dataclasses.replace(self._state, brightness=percent)
+        packet = pkt_brightness(percent)
+        await self._write(packet)
+        self._state = dataclasses.replace(self._state, brightness=packet[2])
 
     async def set_color(self, r: int, g: int, b: int) -> None:
-        await self._write(pkt_solid_color(r, g, b))
-        self._state = dataclasses.replace(self._state, rgb=(r, g, b), mode="manual")
+        packet = pkt_solid_color(r, g, b)
+        await self._write(packet)
+        rgb = (packet[4], packet[5], packet[6])
+        self._state = dataclasses.replace(self._state, rgb=rgb, mode="manual")
 
     async def set_warm_white(self) -> None:
         await self._write(pkt_warm_white())
@@ -285,22 +325,41 @@ class GoveeH7015Client:
     # State polling
     # ------------------------------------------------------------------
     async def poll_state(self) -> H7015State:
-        """Read the read characteristic and decode state."""
-        if not self._client or not self._client.is_connected:
-            raise GoveeConnectionError("not connected")
-        async with self._lock:
-            try:
-                async with asyncio.timeout(BLE_OP_TIMEOUT):
-                    raw = await self._client.read_gatt_char(READ_CHAR_UUID)
-            except TimeoutError as exc:
-                raise GoveeTimeoutError(f"state read timed out after {BLE_OP_TIMEOUT}s") from exc
-            except BleakError as exc:
-                raise GoveeConnectionError(f"BLE read failed: {exc}") from exc
+        """Send a heartbeat and return retained state.
 
-        self._state = decode_state(raw)
-        if self.state_callback:
-            await self.state_callback(self._state)
+        The device has no readable state characteristic; any reply arrives via
+        notification and is merged by ``_on_notify``.
+        """
+        await self._write(pkt_keepalive())
         return self._state
+
+    def _on_notify(self, _char: object, data: bytearray) -> None:
+        """Merge known fields from a notification; ACKs/unknown frames keep state."""
+        if self._intentional_disconnect:
+            return
+        raw = bytes(data)
+        LOGGER.debug("RX %s", raw.hex())
+        decoded = decode_state(raw)
+        previous = self._state
+        self._state = dataclasses.replace(
+            previous,
+            power=decoded.power if decoded.power is not None else previous.power,
+            brightness=(
+                decoded.brightness if decoded.brightness is not None else previous.brightness
+            ),
+            rgb=decoded.rgb if decoded.rgb is not None else previous.rgb,
+            raw=raw,
+        )
+        if self.state_callback and self._loop:
+            task = asyncio.ensure_future(self.state_callback(self._state), loop=self._loop)
+            self._notify_tasks.add(task)
+            task.add_done_callback(self._notification_done)
+
+    def _notification_done(self, task: asyncio.Future[None]) -> None:
+        """Release callback tasks and report callback failures."""
+        self._notify_tasks.discard(task)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            LOGGER.error("State callback failed: %s", error)
 
 
 # ---------------------------------------------------------------------------

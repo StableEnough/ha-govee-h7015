@@ -106,7 +106,8 @@ async def test_device_identifier_has_no_colons(hass) -> None:  # type: ignore[no
         assert our_id == "AABBCCDDEEFF", f"Expected AABBCCDDEEFF, got {our_id}"
 
 
-async def test_set_bulb_finds_coordinator_with_real_device_id(hass) -> None:  # type: ignore[no-untyped-def]
+@pytest.mark.parametrize("write_failure", [False, True])
+async def test_set_bulb_finds_coordinator_with_real_device_id(hass, write_failure: bool) -> None:  # type: ignore[no-untyped-def]
     """set_bulb service must find the coordinator using the real device ID.
 
     This test does NOT pre-create the device registry entry — it lets
@@ -122,7 +123,13 @@ async def test_set_bulb_finds_coordinator_with_real_device_id(hass) -> None:  # 
     with (
         patch.object(H7015Coordinator, "_async_update_data", mock_update),
         patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()),
-        patch.object(H7015Coordinator, "set_bulb", new=AsyncMock()) as mock_set_bulb,
+        patch.object(
+            H7015Coordinator,
+            "set_bulb",
+            new=AsyncMock(
+                side_effect=TimeoutError("simulated write failure") if write_failure else None
+            ),
+        ) as mock_set_bulb,
     ):
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
@@ -135,17 +142,15 @@ async def test_set_bulb_finds_coordinator_with_real_device_id(hass) -> None:  # 
         assert len(devices) == 1
         device = devices[0]
 
-        # Call set_bulb with the REAL device ID
-        await hass.services.async_call(
-            DOMAIN,
-            "set_bulb",
-            {"bulb": 0, "rgb": [255, 0, 0], "device_id": [device.id]},
-            blocking=True,
-        )
+        from homeassistant.exceptions import HomeAssistantError
 
-        # If the MAC bug is present, this raises HomeAssistantError.
-        # If fixed, set_bulb is called.
-        mock_set_bulb.assert_called_once()
+        data = {"bulb": 0, "rgb": [255, 0, 0], "device_id": [device.id]}
+        if write_failure:
+            with pytest.raises(HomeAssistantError, match="simulated write failure"):
+                await hass.services.async_call(DOMAIN, "set_bulb", data, blocking=True)
+        else:
+            await hass.services.async_call(DOMAIN, "set_bulb", data, blocking=True)
+        mock_set_bulb.assert_awaited_once()
 
 
 # ===========================================================================
@@ -386,3 +391,182 @@ async def test_ensure_connected_times_out_when_build_client_hangs(hass) -> None:
 
         with pytest.raises((UpdateFailed, GoveeConnectionError)):
             await asyncio.wait_for(coordinator._ensure_connected(), timeout=2)
+
+
+def _transport_coordinator(hass, client, entry_id: str = "transport"):  # type: ignore[no-untyped-def]
+    coordinator = H7015Coordinator(
+        hass,
+        mac="AA:BB:CC:DD:EE:FF",
+        name="Review",
+        poll_interval=60,
+        entry_id=entry_id,
+        ble_device_lookup=AsyncMock(return_value=object()),
+    )
+    coordinator._build_client = AsyncMock(return_value=client)  # type: ignore[method-assign]
+    return coordinator
+
+
+async def test_subscribes_before_first_write_and_poll_never_reads(hass) -> None:  # type: ignore[no-untyped-def]
+    from tests.mock_h7015 import MockH7015Client
+
+    client = MockH7015Client()
+    await client.connect()
+    coordinator = _transport_coordinator(hass, client)
+    try:
+        await coordinator.set_power(True)
+        state = await coordinator._async_update_data()
+    finally:
+        await coordinator.shutdown()
+    assert client.events[:2] == ["start_notify", "write"]
+    assert client.events.count("start_notify") == 1
+    assert client.mock_write_count == 2  # command + heartbeat, no characteristic read
+    assert state.power is True  # retained commanded state
+
+
+async def test_subscribe_failure_disconnects_and_raises(hass) -> None:  # type: ignore[no-untyped-def]
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    from tests.mock_h7015 import MockH7015Client
+
+    client = MockH7015Client()
+    await client.connect()
+    client.start_notify = AsyncMock(side_effect=RuntimeError("cccd denied"))  # type: ignore[method-assign]
+    coordinator = _transport_coordinator(hass, client, "subfail")
+    with pytest.raises(UpdateFailed, match="subscribe"):
+        await coordinator._ensure_connected()
+    assert not client.is_connected
+    assert coordinator._client is None
+    assert client.mock_write_count == 0
+    assert not coordinator.keepalive_running
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        bytes([0x33, 0x04, 0x01]) + b"\x00" * 17,  # command ACK
+        bytes([0x33, 0x05, 0x00]) + b"\x00" * 17,  # command ACK
+        bytes([0xAB]) + bytes(range(1, 20)),  # unverified AB layout
+    ],
+)
+async def test_ack_and_unknown_notifications_preserve_state(hass, frame: bytes) -> None:  # type: ignore[no-untyped-def]
+    from govee_h7015 import GoveeH7015Client
+    from protocol import H7015State as StandaloneState
+
+    coordinator = H7015Coordinator(
+        hass, mac="AA:BB:CC:DD:EE:FF", name="Review", poll_interval=60, entry_id="ack"
+    )
+    coordinator._device_state = H7015State(
+        power=True, brightness=50, rgb=(10, 20, 30), mode="scene:rainbow"
+    )
+    coordinator._on_notify(None, bytearray(frame))
+    standalone = GoveeH7015Client("AA:BB:CC:DD:EE:FF", keepalive=False)
+    standalone._state = StandaloneState(
+        power=True, brightness=50, rgb=(10, 20, 30), mode="scene:rainbow"
+    )
+    standalone._on_notify(None, bytearray(frame))
+    for state in (coordinator.device_state, standalone.state):
+        assert (state.power, state.brightness, state.rgb) == (True, 50, (10, 20, 30))
+        assert state.mode == "scene:rainbow"
+        assert state.raw == frame
+
+
+async def test_standalone_poll_is_heartbeat_not_read() -> None:
+    from govee_h7015 import GoveeH7015Client
+    from protocol import pkt_keepalive
+
+    transport = AsyncMock()
+    transport.is_connected = True
+    standalone = GoveeH7015Client("AA:BB:CC:DD:EE:FF", keepalive=False)
+    standalone._client = transport
+    await standalone.poll_state()
+    transport.write_gatt_char.assert_awaited_once()
+    assert transport.write_gatt_char.await_args.args[1] == pkt_keepalive()
+    transport.read_gatt_char.assert_not_called()
+
+
+async def test_disconnect_cancels_inflight_reconnect() -> None:
+    import asyncio
+
+    from govee_h7015 import GoveeH7015Client
+
+    reconnect_started = asyncio.Event()
+    release_reconnect = asyncio.Event()
+    transports = []
+
+    class Transport:
+        is_connected = False
+
+        async def connect(self) -> None:
+            if len(transports) == 2:
+                reconnect_started.set()
+                await release_reconnect.wait()
+            self.is_connected = True
+
+        async def start_notify(self, char_uuid, callback) -> None:
+            pass
+
+        async def disconnect(self) -> None:
+            self.is_connected = False
+
+    def factory(*args, **kwargs):
+        transport = Transport()
+        transports.append(transport)
+        return transport
+
+    client = GoveeH7015Client("AA:BB:CC:DD:EE:FF", keepalive=False)
+    with patch("govee_h7015.BleakClient", factory):
+        await client.connect()
+        transports[0].is_connected = False
+        client._on_disconnect(transports[0])
+        await asyncio.wait_for(reconnect_started.wait(), timeout=2)
+        await client.disconnect()
+        release_reconnect.set()
+        client._on_disconnect(transports[0])
+        await asyncio.sleep(0)
+        assert not client.is_connected
+        assert all(not transport.is_connected for transport in transports)
+        assert client._reconnect_task is None
+        await client.connect()
+        assert client.is_connected
+        await client.disconnect()
+
+
+async def test_full_string_color_replaces_cached_bulbs(hass) -> None:  # type: ignore[no-untyped-def]
+    """An all-segment command must replace older individual bulb colors."""
+    from tests.mock_h7015 import MockH7015Client
+
+    client = MockH7015Client()
+    await client.connect()
+    coordinator = _transport_coordinator(hass, client, "full_color")
+    try:
+        await coordinator.set_bulb(8, 0, 0, 255)
+        await coordinator.set_color(255, 0, 0)
+        assert coordinator.get_all_bulb_colors() == dict.fromkeys(range(15), (255, 0, 0))
+        assert coordinator.device_state.rgb == client.mock_rgb == (255, 0, 0)
+    finally:
+        await coordinator.shutdown()
+
+
+async def test_disconnect_cancels_pending_notification_callback() -> None:
+    """Shutdown must not leave a callback running after its BLE client closes."""
+    import asyncio
+
+    from govee_h7015 import GoveeH7015Client
+
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def state_callback(state) -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    client = GoveeH7015Client("AA:BB:CC:DD:EE:FF", keepalive=False, state_callback=state_callback)
+    client._loop = asyncio.get_running_loop()
+    client._on_notify(None, bytearray.fromhex("ab010000000000000000000000000000000000aa"))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    await client.disconnect()
+    assert stopped.is_set()
+    assert not client._notify_tasks

@@ -51,6 +51,12 @@ class ColorCommand(BaseModel):
     brightness: int | None = Field(default=None, ge=0, le=100)
 
 
+class ColorTemperatureCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    cmd: Literal["color_temp"] = "color_temp"
+    kelvin: int = Field(ge=2000, le=6500)
+
+
 class SceneCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cmd: Literal["scene"] = "scene"
@@ -85,51 +91,44 @@ class SegmentCommand(BaseModel):
 class HANativePayload(BaseModel):
     """HA's native MQTT JSON light command payload.
 
-    HA sends a subset of these fields per command. We normalize to one of
-    the explicit command types above via to_command().
+    HA sends a subset of these fields per command. Normalize all actionable
+    fields through to_commands().
     """
 
     model_config = ConfigDict(extra="ignore")
 
     state: Literal["ON", "OFF"] | None = None
-    brightness: int | None = Field(default=None, ge=0, le=255)
+    brightness: int | None = Field(default=None, ge=0, le=100)
     color: HAColor | None = None
+    color_temp: int | None = Field(default=None, ge=154, le=500)  # mireds
     effect: str | None = None
 
-    def to_command(
-        self,
-    ) -> PowerCommand | BrightnessCommand | ColorCommand | SceneCommand | MusicCommand | None:
-        """Normalize HA's native payload to one of our explicit commands.
+    def to_commands(self) -> list[Command]:
+        """Normalize all actionable HA-native fields to explicit commands."""
+        commands: list[Command] = []
+        if self.state is not None:
+            commands.append(PowerCommand(value=self.state == "ON"))
 
-        Returns None if the payload is empty (no actionable fields).
-        """
-        # Effect takes precedence
         if self.effect is not None:
             name = self.effect
-            if name.startswith("music_"):
-                return MusicCommand(name=name[len("music_") :])
-            return SceneCommand(name=name)
-
-        # Color command (optionally with brightness)
-        if self.color is not None:
-            return ColorCommand(
-                r=self.color.r,
-                g=self.color.g,
-                b=self.color.b,
-                brightness=(
-                    int(self.brightness * 100 / 255) if self.brightness is not None else None
-                ),
+            commands.append(
+                MusicCommand(name=name[len("music_") :])
+                if name.startswith("music_")
+                else SceneCommand(name=name)
             )
-
-        # Brightness-only command
+        elif self.color_temp is not None:
+            commands.append(ColorTemperatureCommand(kelvin=round(1000000 / self.color_temp)))
+        elif self.color is not None:
+            commands.append(
+                ColorCommand(
+                    r=self.color.r,
+                    g=self.color.g,
+                    b=self.color.b,
+                )
+            )
         if self.brightness is not None:
-            return BrightnessCommand(value=int(self.brightness * 100 / 255))
-
-        # Power-only command
-        if self.state is not None:
-            return PowerCommand(value=self.state == "ON")
-
-        return None
+            commands.append(BrightnessCommand(value=self.brightness))
+        return commands
 
 
 # ---------------------------------------------------------------------------
@@ -142,8 +141,9 @@ class DeviceState(BaseModel):
 
     state: Literal["ON", "OFF"]
     brightness: int | None = Field(default=None, ge=0, le=100)
-    color_mode: Literal["rgb"] | None = None
+    color_mode: Literal["rgb", "color_temp"] | None = None
     color: HAColor | None = None
+    color_temp: int | None = Field(default=None, ge=154, le=500)
     effect: str | None = None
 
 
@@ -191,7 +191,9 @@ class HADiscovery(BaseModel):
     brightness: bool = True
     brightness_scale: int = 100
     color_mode: bool = True
-    supported_color_modes: list[str] = ["rgb"]
+    supported_color_modes: list[str] = ["rgb", "color_temp"]
+    min_mireds: int = 154
+    max_mireds: int = 500
     effect: bool = True
     effect_list: list[str]
     json_attributes_topic: str
@@ -206,6 +208,7 @@ type Command = (
     PowerCommand
     | BrightnessCommand
     | ColorCommand
+    | ColorTemperatureCommand
     | SceneCommand
     | MusicCommand
     | WarmCommand
@@ -213,48 +216,42 @@ type Command = (
 )
 
 
-def parse_command(payload: bytes) -> Command | None:
-    """Parse a raw MQTT payload into a typed command.
-
-    Returns None for empty payloads. Raises ValidationError on malformed JSON
-    or out-of-range values.
-    """
+def parse_commands(payload: bytes) -> list[Command]:
+    """Parse a payload into all applicable commands, preserving HA field combinations."""
     data = json.loads(payload.decode("utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"expected JSON object, got {type(data).__name__}")
-
     if not data:
-        return None
+        return []
 
-    # If it has a "cmd" field, parse as an explicit command.
     if "cmd" in data:
-        cmd_type = data["cmd"]
-        match cmd_type:
+        match data["cmd"]:
             case "power":
-                return PowerCommand(**data)
+                return [PowerCommand(**data)]
             case "brightness":
-                return BrightnessCommand(**data)
+                return [BrightnessCommand(**data)]
             case "color":
-                return ColorCommand(**data)
+                return [ColorCommand(**data)]
+            case "color_temp":
+                return [ColorTemperatureCommand(**data)]
             case "scene":
-                return SceneCommand(**data)
+                return [SceneCommand(**data)]
             case "music":
-                return MusicCommand(**data)
+                return [MusicCommand(**data)]
             case "warm":
-                return WarmCommand(**data)
+                return [WarmCommand(**data)]
             case "segment":
-                return SegmentCommand(**data)
-            case _:
+                return [SegmentCommand(**data)]
+            case cmd_type:
                 raise ValueError(f"unknown cmd: {cmd_type!r}")
 
-    # Otherwise, parse as HA-native and normalize.
-    native = HANativePayload(**data)
-    return native.to_command()
+    return HANativePayload(**data).to_commands()
 
 
 __all__ = [
     "BrightnessCommand",
     "ColorCommand",
+    "ColorTemperatureCommand",
     "Command",
     "DeviceConfig",
     "DeviceState",
@@ -266,5 +263,5 @@ __all__ = [
     "SceneCommand",
     "SegmentCommand",
     "WarmCommand",
-    "parse_command",
+    "parse_commands",
 ]

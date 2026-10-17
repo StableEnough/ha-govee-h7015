@@ -16,62 +16,33 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "standalone"))
 
-import pytest
 from protocol import (  # type: ignore[import-not-found]
     Command,
+    build_packet,
     decode_state,
     pkt_brightness,
+    pkt_power,
 )
 
 
-class TestBrightnessRoundTrip:
-    """The bug we fixed: brightness unit must be consistent between
-    command (0..100 percent) and polled state (raw byte 0x14..0xFE)."""
+class TestStateDecoding:
+    """Only checksum-valid AA read frames are state; the byte is the raw percent."""
 
-    @pytest.mark.parametrize("pct", [1, 25, 50, 75, 100])
-    def test_round_trip_brightness(self, pct: int) -> None:
-        """Send brightness X%, poll raw byte, decode back to X%."""
-        # Build the command packet to find out what raw byte gets sent
-        pkt = pkt_brightness(pct)
-        raw_byte = pkt[2]
+    @staticmethod
+    def _aa(cmd: int, value: int) -> bytes:
+        return bytes(build_packet(bytes([0xAA, cmd]), bytes([value])))
 
-        # Simulate the device echoing back a state packet with that raw byte
-        state_pkt = bytes([0x33, Command.BRIGHTNESS, raw_byte]) + b"\x00" * 16
-        state_pkt += bytes([0])  # checksum doesn't matter for decode_state
+    def test_aa_brightness_is_percent(self) -> None:
+        assert decode_state(self._aa(Command.BRIGHTNESS, 37)).brightness == 37
 
-        st = decode_state(state_pkt)
-        assert st.brightness is not None
-        # Should be within 1 percentage point (rounding)
-        assert abs(st.brightness - pct) <= 1, (
-            f"round-trip failed: sent {pct}%, raw=0x{raw_byte:02x}, decoded={st.brightness}%"
-        )
+    def test_aa_power(self) -> None:
+        assert decode_state(self._aa(Command.POWER, 1)).power is True
+        assert decode_state(self._aa(Command.POWER, 0)).power is False
 
-    def test_brightness_zero_round_trip(self) -> None:
-        """0% (off) should round-trip to 0%."""
-        pkt = pkt_brightness(0)
-        assert pkt[2] == 0x00
-        state_pkt = bytes([0x33, Command.BRIGHTNESS, 0x00]) + b"\x00" * 17
-        st = decode_state(state_pkt)
-        assert st.brightness == 0
-
-
-class TestPowerDecoding:
-    def test_power_on_state(self) -> None:
-        raw = bytes([0x33, Command.POWER, 0x01]) + b"\x00" * 17
-        st = decode_state(raw)
-        assert st.power is True
-
-    def test_power_off_state(self) -> None:
-        raw = bytes([0x33, Command.POWER, 0x00]) + b"\x00" * 17
-        st = decode_state(raw)
-        assert st.power is False
-
-
-class TestColorDecoding:
-    def test_color_state(self) -> None:
-        raw = bytes([0x33, Command.COLOR, 0x02, 0xFF, 0x80, 0x00]) + b"\x00" * 14
-        st = decode_state(raw)
-        assert st.rgb == (0xFF, 0x80, 0x00)
+    def test_command_acknowledgements_are_not_state(self) -> None:
+        for ack in (pkt_power(True), pkt_brightness(37)):
+            st = decode_state(bytes(ack))
+            assert (st.power, st.brightness) == (None, None)
 
 
 class TestStandaloneAndIntegrationInSync:
@@ -137,3 +108,28 @@ class TestStandaloneAndIntegrationInSync:
         integration = self._load_integration_protocol()
         for rgb in [(0, 0, 0), (255, 255, 255), (128, 64, 32)]:
             assert standalone.pkt_solid_color(*rgb) == integration.pkt_solid_color(*rgb)
+
+    def test_scene_segment_and_catalogue_match(self) -> None:
+        standalone = self._load_standalone()
+        integration = self._load_integration_protocol()
+        assert [(s.name, s.value) for s in standalone.Scene] == [
+            (s.name, s.value) for s in integration.Scene
+        ]
+        for s_scene, i_scene in zip(standalone.Scene, integration.Scene, strict=True):
+            assert standalone.pkt_scene(s_scene) == integration.pkt_scene(i_scene)
+        for bulb in range(standalone.BULB_COUNT):
+            assert standalone.pkt_segment(bulb, 1, 2, 3) == integration.pkt_segment(bulb, 1, 2, 3)
+        assert standalone.pkt_keepalive() == integration.pkt_keepalive()
+
+    def test_decode_state_matches(self) -> None:
+        standalone = self._load_standalone()
+        integration = self._load_integration_protocol()
+        frames = [
+            bytes(standalone.build_packet(b"\xaa\x01", b"\x01")),
+            bytes(standalone.build_packet(b"\xaa\x04", b"\x32")),
+            bytes(standalone.pkt_power(True)),
+            bytes(standalone.build_packet(b"\xab\x01", b"\x01")),
+        ]
+        for frame in frames:
+            s, i = standalone.decode_state(frame), integration.decode_state(frame)
+            assert (s.power, s.brightness, s.rgb, s.raw) == (i.power, i.brightness, i.rgb, i.raw)

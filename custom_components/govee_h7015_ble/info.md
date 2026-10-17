@@ -5,7 +5,7 @@ from Home Assistant — no cloud, no Govee account, no MQTT broker required.
 
 This HACS repository installs a Home Assistant custom integration that
 uses HA's built-in Bluetooth framework to talk to the H7015 over BLE,
-using the protocol reverse-engineered from the Govee Home app.
+using command packets matched to a user-provided H7015 field-test report.
 
 ## Features
 
@@ -15,14 +15,14 @@ using the protocol reverse-engineered from the Govee Home app.
   light entity UI.
 - **Scene effects**: sunrise, sunset, movie, dating, romantic, twinkle,
   candlelight, snowflake, energetic, breathe, crossing, rainbow.
-- **Music modes**: energic, spectrum, rolling, rhythm.
+- **Music modes** (experimental): energic, spectrum, rolling, rhythm.
 - **Per-bulb RGBIC control** — 15 individual light entities (one per bulb)
   for controlling each bulb independently from the HA UI.
 - **Custom Lovelace card** — visual bulb editor with color pickers and
   presets (Rainbow, Warm White, etc.).
 - **HA Scenes support** — snapshot per-bulb colors as a scene and recall
   with one tap.
-- **Configurable poll interval** via Options UI (Settings → Configure).
+- **Configurable heartbeat polling interval** via Options UI (Settings → Configure).
 - **Diagnostics download** for easy bug reporting.
 - **No cloud dependency** — works fully offline.
 
@@ -32,20 +32,34 @@ using the protocol reverse-engineered from the Govee Home app.
 - A working HA Bluetooth setup (built-in radio, ESPHome Bluetooth proxy,
   or a USB Bluetooth dongle)
 - The H7015 in Bluetooth range of your HA Bluetooth adapter
+- Firmware **1.06.00 or newer** for the reported working V2 RGB/per-bulb commands.
+  No automatic older-firmware fallback is attempted.
+
+## Verification limits
+
+The corrected brightness, V2 RGB, segment-mask, and classic-scene packets match
+user-reported hardware tests. This repository has not independently repeated those
+hardware tests. Brightness uses a raw 1–100 percent byte, not the H6127 20–254 scale.
+The 12 classic scene names are the app's built-in catalogue; individual scene
+coverage and segment selection were only partially reported in the field tests.
+Dynamic scenes, DIY, music, gradient, and color-temperature encodings remain
+unverified for H7015.
+
+BLE notifications are subscribed on the same `…2b11` characteristic used for
+writes. Polling sends a heartbeat rather than reading `…2b10`. State is last-commanded
+unless a supported notification updates it; unknown `0xAB` replies and write
+acknowledgements are not decoded as power, brightness, or color. Changes made in the
+Govee app may not appear automatically.
 
 ## Installation
 
-### Via HACS (recommended)
+### Via HACS (requires a GitHub mirror)
 
-1. Add this repository to HACS:
-   - HACS → Integrations → ⋮ → Custom repositories
-   - URL: `https://github.com/StableEnough/ha-govee-h7015`
-   - Category: **Integration**
-2. Click **Install** on "Govee H7015 BLE".
-3. Restart Home Assistant.
-4. Settings → Devices & Services → Add Integration → search "Govee H7015".
-5. The H7015 should auto-discover if it's in Bluetooth range; otherwise
-   enter the MAC address manually.
+HACS cannot install directly from Forgejo. If a public GitHub mirror is
+maintained, add its URL under HACS → Integrations → Custom repositories,
+select the Integration category, and install "Govee H7015 BLE".
+Restart Home Assistant, then add Govee H7015 under Devices & Services.
+The device auto-discovers in Bluetooth range; otherwise enter its MAC manually.
 
 ### Manual
 
@@ -93,9 +107,8 @@ You can also set individual bulbs via service calls (useful in automations):
 
 ```yaml
 service: govee_h7015_ble.set_bulb
-target:
-  device_id: <your H7015 device id>
 data:
+  device_id: [<your H7015 device id>]
   bulb: 0       # 0..14, counting from the controller end
   rgb: [255, 0, 0]
 ```
@@ -118,15 +131,16 @@ You can also create scenes from automations or scripts:
 
 ```yaml
 service: govee_h7015_ble.snapshot_scene
-target:
-  device_id: <your H7015 device id>
 data:
+  device_id: [<your H7015 device id>]
   scene_name: Christmas
 ```
 
 This snapshots all 15 bulb colors and creates a HA scene using the built-in
 `scene.create` service. The scene can then be activated from the dashboard,
-automations, or voice commands.
+automations, or voice commands. The name is normalized to a scene ID (for example,
+`Date Night` becomes `scene.date_night`). Scenes created this way last until HA
+restarts; use the native Scenes UI below for a persistent scene.
 
 ### Manual scene creation
 
@@ -139,10 +153,9 @@ You can also use HA's native Scenes UI:
 4. Set each bulb's color to match your desired pattern
 5. Save
 
-> **Note:** The per-bulb segment encoding is based on the H6127-style
-> bitmask and may need adjustment for the H7015. See the README in the
-> main repository for instructions on capturing the H7015-specific
-> segment packet via HCI snoop.
+> **Note:** Per-bulb writes use the V2 segment-mask packets from the user-provided
+> H7015 field report. Segment selection had partial field coverage; capture
+> HCI traffic if a specific bulb or firmware version behaves differently.
 
 ## Diagnostics
 
@@ -153,10 +166,10 @@ This exports the current state, connection status, and configuration
 
 ## Limitations
 
-- **State polling**: The H7015 doesn't push state changes. The integration
-  polls every 60s by default (configurable in Options). If you change the
-  lights via the Govee app or physical button, HA will catch up on the
-  next poll.
+- **State synchronization**: Heartbeats run every 2s and the configurable poll
+  also sends a heartbeat. Notifications are received on the write characteristic,
+  but unknown replies do not provide decoded state. HA retains last-commanded
+  values; changes in the Govee app or physical button may remain unseen.
 - **Single connection**: The H7015 only allows one BLE connection at a
   time. Close the Govee Home app on your phone before controlling from
   HA, or you'll see connection errors.

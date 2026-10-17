@@ -29,7 +29,7 @@ import os
 import signal
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 try:
     from aiomqtt import Client as AioMqttClient
@@ -49,6 +49,7 @@ from govee_types import MacAddress
 from models import (
     BrightnessCommand,
     ColorCommand,
+    ColorTemperatureCommand,
     DeviceConfig,
     DeviceState,
     HADiscovery,
@@ -57,11 +58,14 @@ from models import (
     SceneCommand,
     SegmentCommand,
     WarmCommand,
-    parse_command,
+    parse_commands,
 )
 from protocol import H7015State, MusicMode, Scene
 from pydantic import AliasChoices, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 LOGGER = logging.getLogger("h7015_bridge")
 
@@ -234,7 +238,6 @@ class DeviceBridge:
 
         if payload == self._last_state:
             return
-        self._last_state = payload
 
         # Validate before publishing — catch bad state from a malformed poll
         try:
@@ -243,7 +246,9 @@ class DeviceBridge:
             LOGGER.warning("[%s] skipping publish of invalid state: %s", self.mac_id, exc)
             return
 
-        await self.mqtt.publish(self.state_topic, validated.model_dump_json(), retain=True, qos=1)
+        await self.mqtt.publish(
+            self.state_topic, validated.model_dump_json(exclude_none=True), retain=True, qos=1
+        )
         await self.mqtt.publish(
             self.attributes_topic,
             json.dumps({"raw": state.raw.hex() if state.raw else None}),
@@ -251,6 +256,7 @@ class DeviceBridge:
             qos=1,
         )
         self.state_cache.save(self.mac_id, payload)
+        self._last_state = payload
 
     async def publish_cached_state(self) -> None:
         cached = self.state_cache.load().get(self.mac_id)
@@ -269,22 +275,23 @@ class DeviceBridge:
     # --- Command handling (pydantic-validated) ---------------------------
     async def handle_command(self, payload: bytes) -> None:
         try:
-            cmd = parse_command(payload)
+            commands = parse_commands(payload)
         except (ValidationError, ValueError, json.JSONDecodeError) as exc:
             LOGGER.warning("[%s] bad command payload: %s", self.mac_id, exc)
             return
 
-        if cmd is None:
+        if not commands:
             return
 
-        LOGGER.info("[%s] RX %s", self.mac_id, cmd)
+        LOGGER.info("[%s] RX %s", self.mac_id, commands)
 
         if not self._client:
             LOGGER.warning("[%s] not connected, dropping cmd", self.mac_id)
             return
 
         try:
-            await self._dispatch(cmd)
+            for cmd in commands:
+                await self._dispatch(cmd)
             try:
                 st = await self._client.poll_state()
                 await self.publish_state(st)
@@ -300,6 +307,7 @@ class DeviceBridge:
         cmd: PowerCommand
         | BrightnessCommand
         | ColorCommand
+        | ColorTemperatureCommand
         | SceneCommand
         | MusicCommand
         | SegmentCommand
@@ -315,6 +323,8 @@ class DeviceBridge:
                 await self._client.set_power(v)
             case BrightnessCommand(value=v):
                 await self._client.set_brightness(v)
+            case ColorTemperatureCommand(kelvin=kelvin):
+                await self._client.set_color_temperature(kelvin)
             case ColorCommand(r=r, g=g, b=b, brightness=br):
                 await self._client.set_color(r, g, b)
                 if br is not None:
@@ -364,11 +374,13 @@ class DeviceBridge:
             except Exception as exc:
                 LOGGER.error("[%s] BLE error: %s", self.mac_id, exc)
             finally:
-                await self.publish_availability(False)
-                if self._client:
-                    with contextlib.suppress(Exception):
-                        await self._client.disconnect()
-                self._client = None
+                try:
+                    await self.publish_availability(False)
+                finally:
+                    if self._client:
+                        with contextlib.suppress(Exception):
+                            await self._client.disconnect()
+                    self._client = None
             LOGGER.info("[%s] reconnecting in %ds", self.mac_id, backoff)
             await asyncio.sleep(backoff)
 
@@ -377,14 +389,25 @@ class DeviceBridge:
         return self._task
 
     async def stop(self) -> None:
+        task_error: Exception | None = None
         if self._task:
             self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await self._task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                task_error = exc
         if self._client:
             with contextlib.suppress(Exception):
                 await self._client.disconnect()
-        await self.publish_availability(False)
+        try:
+            await self.publish_availability(False)
+        except Exception as exc:
+            if task_error is None:
+                task_error = exc
+        if task_error:
+            raise task_error
 
 
 # ---------------------------------------------------------------------------
@@ -395,19 +418,10 @@ async def mqtt_subscriber(
     bridges: list[DeviceBridge],
     settings: BridgeSettings,
     stop_event: asyncio.Event,
+    task_done: Callable[[asyncio.Task[None]], None],
 ) -> None:
-    """Subscribe to all device command topics and dispatch messages.
-
-    Handles MQTT broker reconnects with exponential backoff.
-    Device bridges are started ONCE (outside the reconnect loop) to avoid
-    creating duplicate BLE tasks on every MQTT reconnect.
-    """
+    """Subscribe to command topics, retrying broker failures until shutdown."""
     bridge_by_topic = {b.set_topic: b for b in bridges}
-
-    # Start device bridges once — they handle their own BLE reconnection
-    # independently of MQTT connection state.
-    for b in bridges:
-        b.start()
 
     while not stop_event.is_set():
         try:
@@ -416,7 +430,9 @@ async def mqtt_subscriber(
                     await client.subscribe(b.set_topic, qos=1)
                     await b.publish_discovery()
                     await b.publish_cached_state()
-                    await b.publish_availability(False)
+                    await b.publish_availability(b._client is not None and b._client.is_connected)
+                    if b._task is None:
+                        b.start().add_done_callback(task_done)
 
                 LOGGER.info("MQTT subscribed, listening for commands...")
 
@@ -536,25 +552,39 @@ async def main_async(args: argparse.Namespace) -> int:
         for d in devices
     ]
 
-    LOGGER.info("Starting bridge with %d device(s).", len(bridges))
+    fatal_error: Exception | None = None
 
-    # Run the MQTT subscriber + all device bridges concurrently.
-    # Using TaskGroup so any failure cancels all others cleanly.
-    subscriber_task = asyncio.create_task(mqtt_subscriber(client, bridges, settings, stop_event))
+    def _task_done(task: asyncio.Task[None]) -> None:
+        nonlocal fatal_error
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            fatal_error = fatal_error or exc
+            stop_event.set()
+
+    subscriber_task = asyncio.create_task(
+        mqtt_subscriber(client, bridges, settings, stop_event, _task_done)
+    )
+    subscriber_task.add_done_callback(_task_done)
 
     await stop_event.wait()
 
     LOGGER.info("shutting down...")
     subscriber_task.cancel()
-    # Cancel all device bridges
-    for b in bridges:
-        await b.stop()
+    for bridge in bridges:
+        try:
+            await bridge.stop()
+        except Exception as exc:
+            fatal_error = fatal_error or exc
 
     try:
         async with asyncio.timeout(10):
             await subscriber_task
     except (TimeoutError, asyncio.CancelledError):
         pass
+    except Exception as exc:
+        fatal_error = fatal_error or exc
+
+    if fatal_error:
+        raise fatal_error
 
     return 0
 

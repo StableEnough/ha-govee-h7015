@@ -66,7 +66,7 @@ esp32_ble_tracker:
 
 # ---- BLE client connection --------------------------------------------------
 # ESPHome's ble_client uses mac_address + id; the service_uuid is discovered
-# automatically. We use ble_write actions to send packets to the write
+# automatically. The ble_client.ble_write action sends packets to the write
 # characteristic (UUID 00010203-0405-0607-0809-0a0b0c0d2b11).
 ble_client:
   - mac_address: "AA:BB:CC:DD:EE:FF"   # <-- replace with your H7015 MAC
@@ -93,38 +93,38 @@ ble_client:
 script:
   - id: send_power
     parameters:
-      on: bool
+      power_on: bool
     then:
       - if:
           condition:
             lambda: 'return id(ble_client_h7015)->connected();'
           then:
-            - ble_write:
+            - ble_client.ble_write:
                 characteristic_uuid: "00010203-0405-0607-0809-0a0b0c0d2b11"
                 service_uuid: "00010203-0405-0607-0809-0a0b0c0d1910"
                 id: ble_client_h7015
-                data: !lambda |-
+                value: !lambda |-
                   uint8_t pkt[20] = {0};
-                  pkt[0] = 0x33; pkt[1] = 0x01; pkt[2] = on ? 0x01 : 0x00;
+                  pkt[0] = 0x33; pkt[1] = 0x01; pkt[2] = power_on ? 0x01 : 0x00;
                   uint8_t c = 0; for (int i=0;i<19;i++) c ^= pkt[i];
                   pkt[19] = c;
                   return std::vector<uint8_t>(pkt, pkt+20);
 
   - id: send_brightness
     parameters:
-      value: int    # 0..100 percent
+      value: int    # 1..100 percent; use send_power to turn off
     then:
       - if:
           condition:
             lambda: 'return id(ble_client_h7015)->connected();'
           then:
-            - ble_write:
+            - ble_client.ble_write:
                 characteristic_uuid: "00010203-0405-0607-0809-0a0b0c0d2b11"
                 service_uuid: "00010203-0405-0607-0809-0a0b0c0d1910"
                 id: ble_client_h7015
-                data: !lambda |-
-                  int v = value > 100 ? 100 : (value < 0 ? 0 : value);
-                  uint8_t raw = (v == 0) ? 0 : (uint8_t)(0x14 + (0xFE - 0x14) * (v - 1) / 99);
+                value: !lambda |-
+                  int v = value > 100 ? 100 : (value < 1 ? 1 : value);
+                  uint8_t raw = (uint8_t)v;
                   uint8_t pkt[20] = {0};
                   pkt[0] = 0x33; pkt[1] = 0x04; pkt[2] = raw;
                   uint8_t c = 0; for (int i=0;i<19;i++) c ^= pkt[i];
@@ -141,16 +141,17 @@ script:
           condition:
             lambda: 'return id(ble_client_h7015)->connected();'
           then:
-            - ble_write:
+            - ble_client.ble_write:
                 characteristic_uuid: "00010203-0405-0607-0809-0a0b0c0d2b11"
                 service_uuid: "00010203-0405-0607-0809-0a0b0c0d1910"
                 id: ble_client_h7015
-                data: !lambda |-
+                value: !lambda |-
                   uint8_t pkt[20] = {0};
-                  pkt[0] = 0x33; pkt[1] = 0x05; pkt[2] = 0x02;
-                  pkt[3] = (uint8_t)(r > 255 ? 255 : (r < 0 ? 0 : r));
-                  pkt[4] = (uint8_t)(g > 255 ? 255 : (g < 0 ? 0 : g));
-                  pkt[5] = (uint8_t)(b > 255 ? 255 : (b < 0 ? 0 : b));
+                  pkt[0] = 0x33; pkt[1] = 0x05; pkt[2] = 0x15; pkt[3] = 0x01;
+                  pkt[4] = (uint8_t)(r > 255 ? 255 : (r < 0 ? 0 : r));
+                  pkt[5] = (uint8_t)(g > 255 ? 255 : (g < 0 ? 0 : g));
+                  pkt[6] = (uint8_t)(b > 255 ? 255 : (b < 0 ? 0 : b));
+                  pkt[7] = 0xFF; pkt[8] = 0x7F;
                   uint8_t c = 0; for (int i=0;i<19;i++) c ^= pkt[i];
                   pkt[19] = c;
                   return std::vector<uint8_t>(pkt, pkt+20);
@@ -161,11 +162,11 @@ script:
           condition:
             lambda: 'return id(ble_client_h7015)->connected();'
           then:
-            - ble_write:
+            - ble_client.ble_write:
                 characteristic_uuid: "00010203-0405-0607-0809-0a0b0c0d2b11"
                 service_uuid: "00010203-0405-0607-0809-0a0b0c0d1910"
                 id: ble_client_h7015
-                data: !lambda |-
+                value: !lambda |-
                   uint8_t pkt[20] = {0};
                   pkt[0] = 0xAA; pkt[1] = 0x01;
                   uint8_t c = 0; for (int i=0;i<19;i++) c ^= pkt[i];
@@ -181,7 +182,7 @@ switch:
     turn_on_action:
       - script.execute:
           id: send_power
-          on: true
+          power_on: true
       - mqtt.publish:
           topic: "govee/h7015/AABBCCDDEEFF/state"
           payload: '{"state":"ON"}'
@@ -189,7 +190,7 @@ switch:
     turn_off_action:
       - script.execute:
           id: send_power
-          on: false
+          power_on: false
       - mqtt.publish:
           topic: "govee/h7015/AABBCCDDEEFF/state"
           payload: '{"state":"OFF"}'
@@ -199,7 +200,7 @@ number:
   - platform: template
     name: "Patio Lights Brightness"
     id: patio_brightness
-    min_value: 0
+    min_value: 1
     max_value: 100
     step: 1
     optimistic: true

@@ -467,22 +467,6 @@ async def test_bulb_turn_on_without_color_defaults_to_white(hass) -> None:  # ty
 # ===========================================================================
 
 
-async def test_option_flow_defaults(hass) -> None:  # type: ignore[no-untyped-def]
-    """Verify the option flow constants are correct."""
-    from custom_components.govee_h7015_ble.const import CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
-
-    assert DEFAULT_POLL_INTERVAL == 60
-    assert CONF_POLL_INTERVAL == "poll_interval"
-
-
-async def test_option_flow_class_exists(hass) -> None:  # type: ignore[no-untyped-def]
-    """Verify the OptionsFlow class can be imported."""
-    from custom_components.govee_h7015_ble.options_flow import H7015OptionsFlow
-
-    # Just verify the class exists and has the right method
-    assert hasattr(H7015OptionsFlow, "async_step_init")
-
-
 async def test_setup_with_first_refresh_failure_cleans_up(hass) -> None:  # type: ignore[no-untyped-def]
     """If the first refresh fails, the coordinator should be cleaned up."""
     entry = _make_config_entry("tdd16")
@@ -535,10 +519,10 @@ def test_decode_state_with_short_bytes() -> None:
 
 
 def test_decode_state_with_unknown_command() -> None:
-    """decode_state with unknown command byte should return raw state."""
-    from protocol import decode_state  # type: ignore[import-not-found]
+    """A checksum-valid AA frame with an unknown command yields raw only."""
+    from protocol import build_packet, decode_state  # type: ignore[import-not-found]
 
-    raw = bytes([0x33, 0xFF, 0x00]) + b"\x00" * 17
+    raw = bytes(build_packet(b"\xaa\xff"))
     st = decode_state(raw)
     assert st.power is None
     assert st.brightness is None
@@ -547,25 +531,24 @@ def test_decode_state_with_unknown_command() -> None:
 
 
 def test_brightness_to_raw_at_boundaries() -> None:
-    """brightness_to_raw should handle boundary values correctly."""
+    """The H7015 byte is the raw percent, clamped to 1..100 on commands."""
     from protocol import brightness_to_raw  # type: ignore[import-not-found]
 
-    assert brightness_to_raw(0) == 0x00
-    assert brightness_to_raw(1) == 0x14
-    assert brightness_to_raw(100) == 0xFE
-    assert brightness_to_raw(-5) == 0x00
-    assert brightness_to_raw(150) == 0xFE
+    assert brightness_to_raw(0) == 1
+    assert brightness_to_raw(1) == 1
+    assert brightness_to_raw(100) == 100
+    assert brightness_to_raw(-5) == 1
+    assert brightness_to_raw(150) == 100
 
 
 def test_raw_to_brightness_at_boundaries() -> None:
-    """raw_to_brightness should handle boundary values correctly."""
+    """Read side: the byte is the percent, clamped to 0..100."""
     from protocol import raw_to_brightness  # type: ignore[import-not-found]
 
     assert raw_to_brightness(0) == 0
-    assert raw_to_brightness(0x14) == 1
-    assert raw_to_brightness(0xFE) == 100
+    assert raw_to_brightness(1) == 1
+    assert raw_to_brightness(100) == 100
     assert raw_to_brightness(0xFF) == 100
-    assert raw_to_brightness(0x05) == 1  # between 0 and 0x14
 
 
 def test_pkt_color_temperature_monotonic() -> None:
@@ -595,9 +578,9 @@ def test_pkt_solid_color_with_extreme_values() -> None:
     from protocol import pkt_solid_color  # type: ignore[import-not-found]
 
     pkt = pkt_solid_color(300, -50, 0)
-    assert pkt[3] == 255  # clamped
-    assert pkt[4] == 0  # clamped
-    assert pkt[5] == 0
+    assert pkt[4] == 255  # clamped
+    assert pkt[5] == 0  # clamped
+    assert pkt[6] == 0
 
 
 def test_validate_packet_rejects_wrong_length() -> None:

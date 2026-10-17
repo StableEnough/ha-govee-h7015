@@ -373,7 +373,7 @@ async def test_coordinator_tracks_bulb_colors(hass) -> None:  # type: ignore[no-
 
 
 async def test_snapshot_scene_service(hass) -> None:  # type: ignore[no-untyped-def]
-    """The snapshot_scene service should call scene.create with bulb colors."""
+    """The snapshot service creates a real HA scene that restores bulb colors."""
     entry = _make_config_entry("test_entry_8")
     entry.add_to_hass(hass)
 
@@ -403,46 +403,95 @@ async def test_snapshot_scene_service(hass) -> None:  # type: ignore[no-untyped-
             name="Patio Lights",
         )
 
-        # Register a mock scene.create service that records calls
-        scene_create_calls: list[dict] = []
+        from homeassistant.setup import async_setup_component
 
-        async def mock_scene_create(call):  # type: ignore[no-untyped-def]
-            scene_create_calls.append(dict(call.data))
-
-        hass.services.async_register("scene", "create", mock_scene_create)
-
-        # Call the snapshot_scene service
+        assert await async_setup_component(hass, "scene", {"scene": []})
+        await hass.async_block_till_done()
         await hass.services.async_call(
             DOMAIN,
             "snapshot_scene",
             {"scene_name": "Test Scene", "device_id": [device.id]},
             blocking=True,
         )
+        await hass.async_block_till_done()
+        scene = hass.states.get("scene.test_scene")
+        assert scene is not None
+        assert "light.patio_lights_bulb_1" in scene.attributes["entity_id"]
 
-        # Verify scene.create was called with the right data
-        assert len(scene_create_calls) == 1
-        scene_data = scene_create_calls[0]
-        assert scene_data["name"] == "Test Scene"
+        await coordinator.set_bulb(0, 0, 0, 255)
+        await coordinator.set_bulb(1, 0, 0, 255)
+        await hass.services.async_call(
+            "scene", "turn_on", {"entity_id": "scene.test_scene"}, blocking=True
+        )
+        await hass.async_block_till_done()
+        assert coordinator.get_bulb_color(0) == (255, 0, 0)
+        assert coordinator.get_bulb_color(1) == (0, 255, 0)
 
-        # Check that bulb entities are in the scene.
-        # Entity IDs come from the entity registry, which uses the device
-        # name ("Patio Lights") for the main entity and "Bulb N" for bulbs.
-        entities = scene_data["entities"]
 
-        # The main entity should be light.patio_lights
-        assert "light.patio_lights" in entities
-        assert entities["light.patio_lights"]["state"] == "on"
+async def test_options_flow_updates_interval_and_reloads(hass) -> None:  # type: ignore[no-untyped-def]
+    entry = _make_config_entry("options_routing")
+    entry.add_to_hass(hass)
+    with (
+        patch.object(H7015Coordinator, "_async_update_data", return_value=H7015State(power=True)),
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        with patch.object(hass.config_entries, "async_reload", return_value=True) as reload:
+            result = await hass.config_entries.options.async_init(entry.entry_id)
+            assert result["type"] == "form"
+            assert result["step_id"] == "init"
+            result = await hass.config_entries.options.async_configure(
+                result["flow_id"], {"poll_interval": 120}
+            )
+            await hass.async_block_till_done()
+            assert result["type"] == "create_entry"
+            assert entry.options["poll_interval"] == 120
+            reload.assert_awaited_once_with(entry.entry_id)
 
-        # Bulb entities should be light.patio_lights_bulb_1 through bulb_15
-        # (1-indexed by HA's entity registry)
-        bulb_1_id = "light.patio_lights_bulb_1"
-        assert bulb_1_id in entities, f"missing {bulb_1_id} in {list(entities.keys())}"
-        # Bulb 0 (entity_id bulb_1) was set to red
-        assert entities[bulb_1_id]["state"] == "on"
-        assert entities[bulb_1_id]["rgb_color"] == [255, 0, 0]
 
-        # Bulb 1 (entity_id bulb_2) was set to green
-        bulb_2_id = "light.patio_lights_bulb_2"
-        assert bulb_2_id in entities
-        assert entities[bulb_2_id]["state"] == "on"
-        assert entities[bulb_2_id]["rgb_color"] == [0, 255, 0]
+@pytest.mark.parametrize(
+    ("ha_brightness", "expected_percent"),
+    [(1, 1), (255, 100)],
+)
+async def test_light_turn_on_brightness_boundaries(  # type: ignore[no-untyped-def]
+    hass, ha_brightness: int, expected_percent: int
+) -> None:
+    entry = _make_config_entry(f"bright_{ha_brightness}")
+    entry.add_to_hass(hass)
+    with (
+        patch.object(H7015Coordinator, "_async_update_data", return_value=H7015State()),
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()),
+        patch.object(H7015Coordinator, "set_power", new=AsyncMock()),
+        patch.object(H7015Coordinator, "set_brightness", new=AsyncMock()) as set_brightness,
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        await hass.services.async_call(
+            "light",
+            "turn_on",
+            {"entity_id": "light.patio_lights", "brightness": ha_brightness},
+            blocking=True,
+        )
+        set_brightness.assert_awaited_once_with(expected_percent)
+
+
+async def test_light_turn_on_brightness_zero_turns_off(hass) -> None:  # type: ignore[no-untyped-def]
+    entry = _make_config_entry("bright_zero")
+    entry.add_to_hass(hass)
+    with (
+        patch.object(H7015Coordinator, "_async_update_data", return_value=H7015State(power=True)),
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()),
+        patch.object(H7015Coordinator, "set_power", new=AsyncMock()) as set_power,
+        patch.object(H7015Coordinator, "set_brightness", new=AsyncMock()) as set_brightness,
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        await hass.services.async_call(
+            "light",
+            "turn_on",
+            {"entity_id": "light.patio_lights", "brightness": 0},
+            blocking=True,
+        )
+        set_power.assert_awaited_once_with(False)
+        set_brightness.assert_not_awaited()

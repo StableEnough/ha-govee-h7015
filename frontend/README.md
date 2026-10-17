@@ -26,14 +26,12 @@ Govee H7015 Outdoor String Lights.
 
 ## Installation
 
-### Via HACS (recommended)
+### Via HACS (requires a GitHub mirror)
 
-1. Add this repository to HACS:
-   - HACS → Frontend → ⋮ → Custom repositories
-   - URL: `https://github.com/StableEnough/ha-govee-h7015`
-   - Category: **Dashboard (Lovelace)**
-2. Click **Install** on "Govee H7015 Bulb Editor"
-3. Add the card to any dashboard via **Edit Dashboard → Add Card → Manual**
+HACS cannot install directly from Forgejo. If a public GitHub mirror is
+maintained, add its URL under HACS → Frontend → Custom repositories, select
+Dashboard (Lovelace), and install "Govee H7015 Bulb Editor".
+Add the card via Edit Dashboard → Add Card → Manual.
 
 ### Manual
 
@@ -75,9 +73,8 @@ You can also create scenes from automations or scripts:
 
 ```yaml
 service: govee_h7015_ble.snapshot_scene
-target:
-  device_id: <your H7015 device id>
 data:
+  device_id: [<your H7015 device id>]
   scene_name: Christmas
 ```
 

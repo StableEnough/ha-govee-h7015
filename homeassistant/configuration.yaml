@@ -34,67 +34,20 @@
 #       max_mireds: 500    # 2000K (warm)
 #       effect: true
 #       effect_list:
-#         # 47 scene modes
+#         # Classic built-in catalogue (individual H7015 field coverage is partial)
 #         - sunrise
 #         - sunset
-#         - snowing
-#         - cloud
 #         - movie
-#         - gorgeous
 #         - dating
 #         - romantic
 #         - twinkle
 #         - candlelight
 #         - breathe
-#         - blinking
-#         - starry
-#         - flow
-#         - dream
 #         - snowflake
 #         - energetic
-#         - jumping
-#         - volcano
-#         - ripple
 #         - crossing
-#         - shadow
-#         - wind
 #         - rainbow
-#         - ocean
-#         - aurora
-#         - forest
-#         - waterfall
-#         - firefly
-#         - sparkle
-#         - meteor
-#         - galaxy
-#         - sunny
-#         - night
-#         - dawn
-#         - dusk
-#         - spring
-#         - summer
-#         - autumn
-#         - winter
-#         - christmas
-#         - halloween
-#         - thanksgiving
-#         - valentine
-#         - new_year
-#         - birthday
-#         - party
-#         - relax
-#         - energize
-#         - focus
-#         - reading
-#         - night_light
-#         - celebrate
-#         - festive
-#         - gradient
-#         - pulse
-#         - wave
-#         - chase
-#         - stack
-#         # 4 music modes
+#         # Experimental music modes
 #         - music_energic
 #         - music_spectrum
 #         - music_rolling

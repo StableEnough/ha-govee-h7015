@@ -129,59 +129,45 @@ class TestPower:
 
 
 class TestBrightness:
-    def test_brightness_0_maps_to_0x00(self) -> None:
-        p = pkt_brightness(0)
-        assert p[2] == 0x00
+    """The H7015 brightness byte is the raw percent 1..100."""
 
-    def test_brightness_100_maps_to_0xFE(self) -> None:
-        p = pkt_brightness(100)
-        assert p[2] == 0xFE
+    def test_brightness_byte_is_percent(self) -> None:
+        for pct in (1, 2, 50, 99, 100):
+            assert pkt_brightness(pct)[2] == pct
 
-    def test_brightness_1_maps_to_0x14(self) -> None:
-        p = pkt_brightness(1)
-        assert p[2] == 0x14
+    def test_brightness_zero_clamps_to_one(self) -> None:
+        assert pkt_brightness(0)[2] == 1
 
     def test_brightness_clamps_high(self) -> None:
-        p = pkt_brightness(150)
-        assert p[2] == 0xFE
+        assert pkt_brightness(150)[2] == 100
 
     def test_brightness_clamps_negative(self) -> None:
-        p = pkt_brightness(-10)
-        assert p[2] == 0x00
-
-    def test_brightness_monotonic(self) -> None:
-        # Brightness should monotonically increase with input value
-        values = [pkt_brightness(v)[2] for v in range(1, 101)]
-        assert values == sorted(set(values)), "brightness is not monotonic"
+        assert pkt_brightness(-10)[2] == 1
 
 
 class TestColor:
-    def test_solid_color_red(self) -> None:
+    def test_solid_color_is_v2_all_segments(self) -> None:
         p = pkt_solid_color(255, 0, 0)
-        assert p[1] == Command.COLOR
-        assert p[2] == ColorMode.MANUAL
-        assert p[3:6] == bytes([255, 0, 0])
+        assert p[1:4] == bytes([Command.COLOR, ColorMode.COLOR_V2, 0x01])
+        assert p[4:7] == bytes([255, 0, 0])
+        assert p[7:9] == bytes([0xFF, 0x7F])
 
     def test_solid_color_clamps(self) -> None:
         p = pkt_solid_color(300, -5, 128)
-        assert p[3:6] == bytes([255, 0, 128])
+        assert p[4:7] == bytes([255, 0, 128])
 
     def test_solid_color_checksum(self) -> None:
-        # Verified by hand: 0x33 ^ 0x05 ^ 0x02 ^ 0xff ^ 0x00 ^ 0x00
         p = pkt_solid_color(255, 0, 0)
-        body = p[:-1]
-        assert p[-1] == checksum(body)
+        assert p[-1] == checksum(p[:-1])
 
 
 class TestScenes:
     @pytest.mark.parametrize("scene", list(Scene))
-    def test_all_scenes_have_valid_packets(self, scene: Scene) -> None:
+    def test_scene_packet_is_big_endian_code(self, scene: Scene) -> None:
         p = pkt_scene(scene)
         assert len(p) == PACKET_LEN
-        assert p[0] == 0x33
-        assert p[1] == Command.COLOR
-        assert p[2] == ColorMode.SCENE
-        assert p[3] == scene.value
+        assert p[:3] == bytes([0x33, Command.COLOR, ColorMode.SCENE])
+        assert int.from_bytes(p[3:5], "big") == scene.value
         assert p[-1] == checksum(p[:-1])
 
 
@@ -202,22 +188,15 @@ class TestMusic:
 class TestSegments:
     def test_segment_first_bulb(self) -> None:
         p = pkt_segment(0, 255, 0, 0)
-        assert p[1] == Command.COLOR
-        assert p[2] == ColorMode.SEGMENTS
-        assert p[3:6] == bytes([255, 0, 0])
-        # First bulb should set bit 0 of the left byte
-        assert p[6] == 0x01
-        assert p[7] == 0x00
+        assert p == bytes.fromhex("33051501ff0000010000000000000000000000dc")
 
-    def test_segment_bulb_8_uses_right_byte(self) -> None:
+    def test_segment_bulb_8_uses_mask_hi(self) -> None:
         p = pkt_segment(8, 0, 0, 255)
-        assert p[6] == 0x00
-        assert p[7] == 0x01
+        assert p[7:9] == bytes([0x00, 0x01])
 
-    def test_segment_bulb_14(self) -> None:
+    def test_segment_bulb_14_is_last_valid_mask_bit(self) -> None:
         p = pkt_segment(14, 255, 255, 255)
-        # Bit 6 of the right byte
-        assert p[7] == 0x40
+        assert p[7:9] == bytes([0x00, 0x40])
 
     def test_segment_out_of_range_raises(self) -> None:
         from exceptions import GoveeInvalidArgumentError  # type: ignore[import-not-found]
@@ -388,40 +367,41 @@ class TestDIYMode:
 # ---------------------------------------------------------------------------
 # State decoding
 # ---------------------------------------------------------------------------
+def _aa(cmd: int, *payload: int) -> bytes:
+    return bytes(build_packet(bytes([0xAA, cmd]), bytes(payload)))
+
+
 class TestDecodeState:
-    def test_decode_power_on(self) -> None:
-        # Construct a fake state response that looks like a power packet
-        raw = bytes([0x33, 0x01, 0x01]) + b"\x00" * 16 + bytes([0x33])
-        st = decode_state(raw)
-        assert st.power is True
+    def test_decode_aa_power(self) -> None:
+        assert decode_state(_aa(0x01, 0x01)).power is True
+        assert decode_state(_aa(0x01, 0x00)).power is False
 
-    def test_decode_power_off(self) -> None:
-        raw = bytes([0x33, 0x01, 0x00]) + b"\x00" * 16 + bytes([0x32])
-        st = decode_state(raw)
-        assert st.power is False
+    def test_decode_aa_brightness_is_raw_percent(self) -> None:
+        assert decode_state(_aa(0x04, 100)).brightness == 100
+        assert decode_state(_aa(0x04, 50)).brightness == 50
+        assert decode_state(_aa(0x04, 0)).brightness == 0
 
-    def test_decode_brightness(self) -> None:
-        # 0xFE is the max raw byte; decode_state should convert to 100%
-        raw = bytes([0x33, 0x04, 0xFE]) + b"\x00" * 16 + bytes([0xC9])
-        st = decode_state(raw)
-        assert st.brightness == 100
+    def test_command_ack_is_not_state(self) -> None:
+        """A 0x33 command echo/status must never become power or brightness."""
+        for ack in (pkt_power(True), pkt_brightness(40), pkt_solid_color(255, 0, 0)):
+            st = decode_state(bytes(ack))
+            assert (st.power, st.brightness, st.rgb) == (None, None, None)
+            assert st.raw == bytes(ack)
 
-    def test_decode_brightness_zero(self) -> None:
-        raw = bytes([0x33, 0x04, 0x00]) + b"\x00" * 16 + bytes([0x37])
+    def test_unknown_ab_response_preserved_raw_only(self) -> None:
+        raw = bytes(build_packet(b"\xab\x01", b"\x01\x64"))
         st = decode_state(raw)
-        assert st.brightness == 0
+        assert (st.power, st.brightness, st.rgb) == (None, None, None)
+        assert st.raw == raw
 
-    def test_decode_brightness_mid(self) -> None:
-        # 0x14 = 1%, 0xFE = 100%, midpoint ~= 0x89
-        raw = bytes([0x33, 0x04, 0x89]) + b"\x00" * 16 + bytes([0])
-        st = decode_state(raw)
-        assert 45 <= st.brightness <= 55
+    def test_bad_checksum_aa_frame_ignored(self) -> None:
+        raw = bytearray(_aa(0x01, 0x01))
+        raw[-1] ^= 0xFF
+        assert decode_state(bytes(raw)).power is None
 
-    def test_decode_color(self) -> None:
-        raw = bytes([0x33, 0x05, 0x02, 0xFF, 0x00, 0x00]) + b"\x00" * 13
-        raw += bytes([checksum(raw)])
-        st = decode_state(raw)
-        assert st.rgb == (0xFF, 0x00, 0x00)
+    def test_wrong_length_aa_frame_ignored(self) -> None:
+        assert decode_state(_aa(0x01, 0x01)[:-1]).power is None
+        assert decode_state(_aa(0x01, 0x01) + b"\x00").power is None
 
     def test_decode_garbage_returns_empty_state(self) -> None:
         st = decode_state(b"\x00\x01\x02")

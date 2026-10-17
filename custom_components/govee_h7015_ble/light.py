@@ -44,8 +44,7 @@ PARALLEL_UPDATES = 1
 SCENE_BY_NAME: Final = {s.name.lower(): s for s in Scene}
 MUSIC_BY_NAME: Final = {m.name.lower(): m for m in MusicMode}
 
-# Color temperature range in Kelvin (HA's preferred unit since 2026.3).
-# H7015 supports 2000K (warm) to 6500K (cold).
+# Legacy white-mode UI range; the H7015 wire encoding remains unverified.
 MIN_KELVIN = 2000  # warmest
 MAX_KELVIN = 6500  # coldest
 
@@ -72,6 +71,7 @@ class H7015Light(CoordinatorEntity[H7015Coordinator], LightEntity):
     """Main light entity controlling the whole H7015 string."""
 
     _attr_has_entity_name = True
+    _attr_assumed_state = True
     _attr_name = None  # Use device name
     _attr_supported_features = LightEntityFeature.EFFECT
     _attr_supported_color_modes = {ColorMode.RGB, ColorMode.COLOR_TEMP}
@@ -159,6 +159,10 @@ class H7015Light(CoordinatorEntity[H7015Coordinator], LightEntity):
     # ------------------------------------------------------------------
     @override
     async def async_turn_on(self, **kwargs: Any) -> None:
+        if kwargs.get(ATTR_BRIGHTNESS) == 0:
+            await self.async_turn_off()
+            return
+
         await self._coordinator.set_power(True)
 
         if ATTR_EFFECT in kwargs:
@@ -176,7 +180,7 @@ class H7015Light(CoordinatorEntity[H7015Coordinator], LightEntity):
 
         if ATTR_BRIGHTNESS in kwargs:
             ha_b = kwargs[ATTR_BRIGHTNESS]
-            await self._coordinator.set_brightness(int(ha_b * 100 / 255))
+            await self._coordinator.set_brightness(max(1, round(ha_b * 100 / 255)))
 
         self.async_write_ha_state()
 
@@ -207,12 +211,12 @@ class H7015BulbLight(CoordinatorEntity[H7015Coordinator], LightEntity):
     - Creating HA scenes that snapshot per-bulb colors
     - Automation scripts that set specific bulbs
 
-    Note: The H7015 doesn't report per-bulb state, so these entities
-    reflect the last color that HA commanded. If you change a bulb via
-    the Govee app, the entity state will be stale.
+    Per-bulb colors are last-commanded state, not decoded hardware readback.
+    Changes made in the Govee app may therefore leave these entities stale.
     """
 
     _attr_has_entity_name = True
+    _attr_assumed_state = True
     _attr_supported_color_modes = {ColorMode.RGB}
     _attr_entity_category = EntityCategory.CONFIG
 

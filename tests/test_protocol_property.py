@@ -23,6 +23,7 @@ from protocol import (  # type: ignore[import-not-found]
     PACKET_LEN,
     Scene,
     brightness_to_raw,
+    build_packet,
     checksum,
     decode_state,
     pkt_brightness,
@@ -80,23 +81,18 @@ class TestPacketInvariants:
 # ---------------------------------------------------------------------------
 # Brightness round-trip property
 # ---------------------------------------------------------------------------
-class TestBrightnessRoundTrip:
-    @given(st_brightness)
-    def test_round_trip_within_1_percent(self, pct: int) -> None:
-        """Send pct%, get raw byte, decode back — should be within 1."""
-        raw = brightness_to_raw(pct)
-        decoded = raw_to_brightness(raw)
-        if pct == 0:
-            assert decoded == 0
-        else:
-            assert abs(decoded - pct) <= 1
+class TestBrightnessBoundaries:
+    @given(st.integers(min_value=-1000, max_value=1000))
+    def test_command_byte_is_percent_clamped_to_1_100(self, pct: int) -> None:
+        assert pkt_brightness(pct)[2] == max(BRIGHTNESS_MIN_RAW, min(BRIGHTNESS_MAX_RAW, pct))
+
+    @given(st.integers(min_value=0, max_value=255))
+    def test_read_byte_never_exceeds_percent_range(self, raw: int) -> None:
+        assert 0 <= raw_to_brightness(raw) <= 100
 
     @given(st.integers(min_value=BRIGHTNESS_MIN_RAW, max_value=BRIGHTNESS_MAX_RAW))
-    def test_raw_to_brightness_to_raw_idempotent(self, raw: int) -> None:
-        """raw -> percent -> raw should be the identity (within rounding)."""
-        pct = raw_to_brightness(raw)
-        raw2 = brightness_to_raw(pct)
-        assert abs(raw2 - raw) <= 2  # rounding tolerance
+    def test_in_range_percent_is_identity(self, pct: int) -> None:
+        assert brightness_to_raw(pct) == pct == raw_to_brightness(pct)
 
 
 # ---------------------------------------------------------------------------
@@ -132,12 +128,13 @@ class TestDecodeStateRobustness:
         # And the raw should be preserved
         assert st.raw == raw if raw else st.raw in (None, raw)
 
-    @given(st_byte, st_byte, st_byte)
-    def test_power_decode_when_prefix_matches(self, cmd: int, val: int, _: int) -> None:
-        """If byte 0 is 0x33 and byte 1 is 0x01 (POWER), power should decode."""
-        raw = bytes([0x33, 0x01, val]) + b"\x00" * 17
-        st = decode_state(raw)
-        assert st.power == bool(val)
+    @given(st_byte)
+    def test_only_checksum_valid_aa_frames_decode_power(self, val: int) -> None:
+        frame = bytes(build_packet(b"\xaa\x01", bytes([val])))
+        assert decode_state(frame).power == bool(val)
+        # The same bytes as a 0x33 command acknowledgment are never state.
+        ack = bytes(build_packet(b"\x33\x01", bytes([val])))
+        assert decode_state(ack).power is None
 
 
 # ---------------------------------------------------------------------------
@@ -150,5 +147,5 @@ class TestEnumCoverage:
         assert len(pkt) == PACKET_LEN
         assert pkt[0] == 0x33
         assert pkt[-1] == checksum(pkt[:-1])
-        # The scene value should appear at byte 3
-        assert pkt[3] == scene.value
+        # Scene code is a big-endian u16 at bytes 3..4
+        assert int.from_bytes(pkt[3:5], "big") == scene.value

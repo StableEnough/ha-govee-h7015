@@ -10,6 +10,7 @@ import voluptuous as vol
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, HomeAssistantError, ServiceCall
 from homeassistant.helpers import device_registry as dr
+from homeassistant.util import slugify
 
 from .const import (
     ATTR_BULB,
@@ -25,7 +26,6 @@ from .const import (
     SERVICE_SNAPSHOT_SCENE,
 )
 from .coordinator import H7015Coordinator
-from .options_flow import H7015OptionsFlow
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -103,13 +103,6 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_get_options_flow(
-    config_entry: ConfigEntry,
-) -> H7015OptionsFlow:
-    """Get the options flow for this integration."""
-    return H7015OptionsFlow()
-
-
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
@@ -168,20 +161,17 @@ async def _handle_set_bulb(call: ServiceCall) -> None:
             f"No Govee H7015 coordinator found for target device(s): {target_device_ids}"
         )
 
-    # Apply to all target coordinators in parallel, catching per-device errors
-    # so one failure doesn't prevent the others from updating.
-    async def _safe_set_bulb(coord: H7015Coordinator) -> None:
-        try:
-            await coord.set_bulb(bulb, r, g, b)
-            # Notify listeners so per-bulb entities refresh their state.
-            # Without this, the bulb entity UI won't update until the next poll.
-            coord.async_update_listeners()
-        except Exception as exc:
-            _LOGGER.error("set_bulb failed for %s: %s", coord.mac, exc)
+    async def _set_bulb(coord: H7015Coordinator) -> None:
+        await coord.set_bulb(bulb, r, g, b)
+        coord.async_update_listeners()
 
-    await asyncio.gather(
-        *[_safe_set_bulb(c) for c in target_coordinators],
+    # Finish every target, then report failures instead of pretending success.
+    results = await asyncio.gather(
+        *(_set_bulb(coord) for coord in target_coordinators), return_exceptions=True
     )
+    for result in results:
+        if isinstance(result, Exception):
+            raise HomeAssistantError(f"set_bulb failed: {result}") from result
 
 
 async def _handle_snapshot_scene(call: ServiceCall) -> None:
@@ -278,7 +268,7 @@ async def _handle_snapshot_scene(call: ServiceCall) -> None:
         "scene",
         "create",
         {
-            "name": scene_name,
+            "scene_id": slugify(scene_name),
             "entities": entities,
         },
         blocking=True,

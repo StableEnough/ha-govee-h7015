@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Forgejo CI for locked Python 3.13 dependencies, Ruff, standalone mypy, Lovelace
+  JavaScript syntax, pytest/Hypothesis, Hassfest, and redacted Gitleaks scans.
+- Tag releases publish a manual-install integration ZIP after blocking checks pass.
+- Repository-wide agent guidance and privacy rules for files and Git identities.
+
+### Changed
+- Replaced GitHub Actions workflows with Forgejo automation; retained issue
+  templates and HACS metadata for optional GitHub-mirror compatibility.
+- Removed owner-specific project links and codeowner metadata, except the required
+  manifest documentation URL pending a real project-only replacement.
+- Corrected development setup instructions for mutually exclusive dependency extras.
+
+### Fixed
+- Corrected H7015 brightness to raw percent, RGB/per-bulb writes to the reported
+  V2 segment-mask format, and classic scenes to the reported big-endian IDs
+  (Crossing 21, Rainbow 22), with matching standalone packet behavior.
+- Replaced the assumed separate BLE read characteristic with subscription on the
+  write/notify characteristic, serialized 80 ms write pacing, and heartbeat polling.
+  Unknown replies and write acknowledgements no longer masquerade as state readback.
+- Removed speculative scene names from the exposed catalogue; documented firmware
+  requirements, reported field-test provenance, and remaining unverified commands.
+- Home Assistant manifest dependency key and service device selectors now follow
+  the schemas validated by Hassfest.
+- Removed a redundant BLE connect call that rejected the already-connected
+  client returned by bleak-retry-connector.
+- Installed console commands now resolve packaged modules, and scan/probe
+  entry points run their async mains.
+- Docker now installs dependencies before source, then installs and runs the
+  packaged bridge command after copying the project.
+- ESPHome BLE scripts now use the documented `ble_client.ble_write` action.
+- MQTT bridge tasks now report unexpected failures to the process supervisor, and
+  broker errors cannot bypass BLE disconnection.
+- HA-native MQTT commands now retain power when state arrives alongside
+  brightness, color, or an effect.
+- MQTT brightness input now uses the same 0–100 scale advertised by discovery.
+- Partial BLE readbacks retain known power, brightness, RGB, and mode in both clients.
+- Scene snapshots now pass a normalized `scene_id` to HA's real scene service.
+- HA options now route through the config-flow handler and reload after updates.
+- Per-bulb service failures now reach callers after all target devices are attempted.
+- Standalone shutdown cancels in-flight reconnects and ignores late disconnect callbacks.
+- Broker reconnects publish current BLE availability without restarting device tasks.
+- Failed MQTT state publications remain retryable; deduplication starts only after success.
+- MQTT discovery, command validation, and published state now agree on color-temperature
+  support and units; native commands retain brightness alongside effects or white mode.
+
 ## [1.1.0] - 2026-07-11
 
 ### Added
