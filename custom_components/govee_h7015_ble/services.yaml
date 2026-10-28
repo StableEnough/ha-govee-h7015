@@ -31,11 +31,11 @@ set_bulb:
         color_rgb: {}
 
 snapshot_scene:
-  name: Snapshot current colors as scene
+  name: Snapshot colors and brightness as scene
   description: >-
-    Snapshots the current per-bulb colors and creates a HA scene using the
-    built-in scene.create service. The scene can then be activated from the
-    dashboard, automations, or voice commands. Requires a target device.
+    Saves bulb colors and known whole-string and lit-bulb brightness using
+    scene.create. Unknown levels are omitted and off bulbs remain off.
+    Creates a temporary scene that lasts until HA restarts. Requires a target device.
   fields:
     device_id:
       name: Device

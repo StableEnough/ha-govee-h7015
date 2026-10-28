@@ -1,14 +1,14 @@
 # Govee H7015 Bulb Editor
 
-A custom Lovelace card for visually controlling individual bulb colors on the
-Govee H7015 Outdoor String Lights.
+A custom Lovelace card for visually controlling individual bulb colors and relative
+brightness on the Govee H7015 Outdoor String Lights.
 
 ![Bulb Editor](https://via.placeholder.com/400x200?text=Govee+H7015+Bulb+Editor)
 
 ## Features
 
 - **Visual bulb grid** — 15 color swatches, one per bulb
-- **Click to edit** — click any bulb to select it, then use the color picker
+- **Click to edit** — select a bulb, then use its color picker or 1–100% brightness slider
 - **12 preset patterns**:
   - 🌈 Rainbow — full spectrum across all 15 bulbs
   - 💡 Warm White — all bulbs warm white (255, 196, 120)
@@ -20,9 +20,13 @@ Govee H7015 Outdoor String Lights.
   - 🍭 Candy Cane — alternating red and white
   - 🔴 All Red / 🟢 All Green / 🔵 All Blue
   - ⚫ All Off
-- **Save as Scene** — one click to snapshot current colors as a HA scene
+- **Save as Scene** — snapshot colors and known whole-string/lit-bulb brightness
 - **Instant feedback** — colors update immediately as you send commands
 - **Power toggle** — turn the whole string on/off from the card
+
+The brightness percentage is relative to the separate whole-string brightness.
+It shows **Unknown** until commanded and is disabled until an available bulb is
+selected. Dragging previews the value; releasing sends one command to that bulb.
 
 ## Installation
 
@@ -59,13 +63,15 @@ device_id: aabbccddeeff1234567890   # device ID from Settings → Devices
 
 ### One-click scene creation
 
-1. Set the bulbs to the colors you want (use presets or individual color pickers)
+1. Set bulb colors and brightness; adjust whole-string brightness in HA if needed
 2. Click **💾 Save as Scene**
 3. Enter a name (e.g. "Christmas", "Date Night", "Patriotic")
 4. Click **Save Scene**
 
-The card calls HA's built-in `scene.create` service, which creates a scene
-you can immediately activate from the dashboard, automations, or voice commands.
+The card calls the integration's `snapshot_scene` service, which uses HA's built-in
+`scene.create`. You can immediately activate the scene from the dashboard,
+automations, or voice commands. These dynamic scenes last until HA restarts;
+use HA's native Scenes UI to save a permanent scene.
 
 ### Via the `snapshot_scene` service
 
@@ -78,15 +84,18 @@ data:
   scene_name: Christmas
 ```
 
-This snapshots all 15 bulb colors at the moment of the call and creates a
-HA scene with that name.
+This saves all 15 bulb colors/on-off states and known whole-string and lit-bulb
+brightness. Unknown levels are omitted rather than replaced with a guessed value.
+As with native HA light scenes, off bulbs stay off; their latent brightness is not
+recalled. The main string is turned on to display the saved pattern.
 
 ## Tips
 
 - **BLE write speed**: Setting all 15 bulbs takes ~1.5 seconds (100ms pacing
   between writes to avoid overwhelming the BLE connection).
-- **Stale state**: If someone changes the lights via the Govee app, the bulb
-  colors shown in the card will be stale until you set them from HA again.
+- **Assumed state**: Colors and brightness remember commands across integration
+  reloads and HA restarts. Govee app changes can leave them stale; restored values
+  are not hardware readback and do not automatically send commands to the lights.
 - **Group the bulb entities**: In HA's entity settings, you can hide the 15
   individual bulb entities from the main view if you only want to control
   them via this card.

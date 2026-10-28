@@ -3,9 +3,10 @@
  *
  * Features:
  * - 15 color swatches (one per bulb), click to select + color picker
+ * - Selected-bulb brightness control
  * - 12 preset patterns: Rainbow, Warm White, Fireplace, Ocean, Christmas,
  *   Sunset, USA Flag, Candy Cane, All Red/Green/Blue, All Off
- * - "Save as Scene" button — snapshots current bulb colors as a HA scene
+ * - "Save as Scene" button — snapshots current bulb colors and brightness as a HA scene
  * - Power toggle
  *
  * Installation:
@@ -247,6 +248,7 @@ class GoveeH7015BulbCard extends HTMLElement {
     this.selectedBulb = null;
     this.sceneName = "";
     this.showSceneDialog = false;
+    this.brightnessPreview = null;
   }
 
   set hass(hass) {
@@ -298,6 +300,19 @@ class GoveeH7015BulbCard extends HTMLElement {
       }
     }
     this.bulbColors = bulbColors;
+    const selectedEntityId = this.selectedBulb === null
+      ? null
+      : `light.${baseEntityId}_bulb_${this.selectedBulb + 1}`;
+    const selectedState = selectedEntityId ? this._hass.states[selectedEntityId] : null;
+    const selectedAvailable = !!selectedState && !["unknown", "unavailable"].includes(selectedState.state);
+    const rawBrightness = selectedState?.attributes.brightness;
+    const brightness = selectedAvailable && typeof rawBrightness === "number" && Number.isFinite(rawBrightness)
+      ? Math.round(rawBrightness * 100 / 255)
+      : null;
+    const brightnessValue = this.brightnessPreview ?? brightness ?? 1;
+    const brightnessLabel = this.brightnessPreview !== null
+      ? `${this.brightnessPreview}%`
+      : brightness === null ? "Unknown" : `${brightness}%`;
 
     const isOn = stateObj.state === "on";
 
@@ -345,10 +360,19 @@ class GoveeH7015BulbCard extends HTMLElement {
           font-weight: 500;
           border: 1px solid var(--divider-color);
         }
-        .save-scene-btn:hover {
-          background: var(--primary-color);
-          color: white;
+        .brightness-control {
+          margin-bottom: 16px;
+          padding: 12px;
+          background: var(--secondary-background-color);
+          border-radius: 8px;
         }
+        .brightness-control label {
+          display: flex;
+          justify-content: space-between;
+          margin-bottom: 8px;
+          font-weight: 500;
+        }
+        .brightness-control input { width: 100%; }
         .bulbs {
           display: grid;
           grid-template-columns: repeat(5, 1fr);
@@ -508,18 +532,27 @@ class GoveeH7015BulbCard extends HTMLElement {
         <input type="color" id="color-input"
                value="${this.selectedBulb !== null ? rgbToHex(bulbColors[this.selectedBulb]) : "#808080"}">
       </div>
+      <div class="brightness-control">
+        <label for="bulb-brightness">
+          <span>Bulb ${this.selectedBulb !== null ? this.selectedBulb + 1 : ""} Brightness</span>
+          <span id="brightness-value">${brightnessLabel}</span>
+        </label>
+        <input type="range" id="bulb-brightness" min="1" max="100" step="1"
+               value="${brightnessValue}" aria-label="Selected bulb brightness"
+               ${!selectedAvailable ? "disabled" : ""}>
+      </div>
       <div class="presets" id="presets">
         ${presetButtons}
       </div>
       <div class="status-msg" id="status-msg"></div>
       <div class="instructions">
-        Click a bulb to select it, then use the color picker to change its color.
-        Use presets to set all bulbs at once. Click "Save as Scene" to snapshot
-        the current bulb colors as a HA scene you can recall later.
+        Click a bulb to select it, then use the color picker or brightness slider.
+        Use presets to set all bulbs at once. "Save as Scene" snapshots the current
+        bulb colors and brightness as a HA scene you can recall later.
       </div>
       <div class="scene-overlay" id="scene-overlay"></div>
       <div class="scene-dialog" id="scene-dialog">
-        <h4>💾 Save Current Colors as Scene</h4>
+        <h4>💾 Save Current Colors & Brightness as Scene</h4>
         <input type="text" id="scene-name-input" placeholder="Scene name (e.g. Christmas)"
                value="${escapeHtml(this.sceneName)}">
         <div class="buttons">
@@ -530,7 +563,7 @@ class GoveeH7015BulbCard extends HTMLElement {
     `;
 
     this.attachListeners(deviceId, entityId);
-    this.showStatus(this._status || "");
+    this.showStatus(this._status || this._brightnessError || "");
   }
 
   attachListeners(deviceId, entityId) {
@@ -554,6 +587,30 @@ class GoveeH7015BulbCard extends HTMLElement {
         if (this.selectedBulb === null) return;
         const rgb = hexToRgb(e.target.value);
         this.callSetBulb(deviceId, this.selectedBulb, rgb).catch(() => {});
+      });
+    }
+    const brightnessInput = this.shadowRoot.querySelector("#bulb-brightness");
+    if (brightnessInput) {
+      brightnessInput.addEventListener("input", (e) => {
+        this.brightnessPreview = Number(e.target.value);
+        this.shadowRoot.querySelector("#brightness-value").textContent = `${this.brightnessPreview}%`;
+      });
+      brightnessInput.addEventListener("change", async (e) => {
+        const percent = Number(e.target.value);
+        const bulbEntityId = `light.${entityId.replace("light.", "")}_bulb_${this.selectedBulb + 1}`;
+        this.brightnessPreview = null;
+        this.showStatus("");
+        try {
+          await this._hass.callService("light", "turn_on", {
+            entity_id: bulbEntityId,
+            brightness_pct: percent,
+          });
+        } catch (err) {
+          this.render();
+          this.showStatus(`Failed to set brightness: ${err.message || err}`);
+          return;
+        }
+        this.render();
       });
     }
 
@@ -712,6 +769,6 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: "govee-h7015-bulb-card",
   name: "Govee H7015 Bulb Editor",
-  description: "Visual editor for individual bulb colors on the Govee H7015 string light",
+  description: "Visual editor for individual bulb colors and brightness on the Govee H7015 string light",
   preview: false,
 });

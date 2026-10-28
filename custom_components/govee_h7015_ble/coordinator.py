@@ -18,8 +18,10 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Final, override
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from .const import DOMAIN
 from .exceptions import (
     GoveeConnectionError,
     GoveeError,
@@ -84,6 +86,8 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         self.name = name
         self.entry_id = entry_id
         self._config_entry = config_entry
+        self._store: Store[dict[str, Any]] = Store(hass, 1, f"{DOMAIN}_{entry_id}")
+        self._state_changed = False
         self._ble_device_lookup = ble_device_lookup or _default_ble_device_lookup
         self._client: BleClient | None = None
         self._keepalive_task: asyncio.Task[None] | None = None
@@ -147,6 +151,79 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
+    async def async_load_state(self) -> None:
+        """Restore last-commanded state without contacting the device."""
+        stored = await self._store.async_load()
+        if not isinstance(stored, dict):
+            return
+
+        state = stored.get("state")
+        if isinstance(state, dict):
+            power = state.get("power")
+            brightness = state.get("brightness")
+            rgb = _stored_rgb(state.get("rgb"))
+            mode = state.get("mode")
+            changes: dict[str, Any] = {}
+            if type(power) is bool:
+                changes["power"] = power
+            if _stored_percent(brightness):
+                changes["brightness"] = brightness
+            if rgb is not None:
+                changes["rgb"] = rgb
+            if isinstance(mode, str):
+                changes["mode"] = mode
+            self._device_state = dataclasses.replace(self._device_state, **changes)
+
+        for name, destination in (
+            ("bulb_colors", self._bulb_colors),
+            ("bulb_restore_colors", self._bulb_restore_colors),
+        ):
+            values = stored.get(name)
+            if not isinstance(values, dict):
+                continue
+            for raw_index, value in values.items():
+                try:
+                    index = int(raw_index)
+                except (TypeError, ValueError):
+                    continue
+                rgb = _stored_rgb(value)
+                if 0 <= index < BULB_COUNT and rgb is not None:
+                    destination[index] = rgb
+
+        brightness_values = stored.get("bulb_brightness")
+        if isinstance(brightness_values, dict):
+            for raw_index, value in brightness_values.items():
+                try:
+                    index = int(raw_index)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= index < BULB_COUNT and _stored_percent(value):
+                    self._bulb_brightness[index] = value
+
+    def _stored_state(self) -> dict[str, Any]:
+        """Serialize only validated settings and caches; never persist wire data."""
+        state = self.device_state
+        return {
+            "state": {
+                "power": state.power,
+                "brightness": state.brightness,
+                "rgb": list(state.rgb) if state.rgb is not None else None,
+                "mode": state.mode,
+            },
+            "bulb_colors": {str(index): list(rgb) for index, rgb in self._bulb_colors.items()},
+            "bulb_restore_colors": {
+                str(index): list(rgb) for index, rgb in self._bulb_restore_colors.items()
+            },
+            "bulb_brightness": {
+                str(index): value for index, value in self._bulb_brightness.items()
+            },
+        }
+
+    def _schedule_store_save(self) -> None:
+        """Debounce persistence after acknowledged command changes."""
+        self._state_changed = True
+        self._store.async_delay_save(self._stored_state, 1)
+
     async def _ensure_connected(self) -> BleClient:
         """Connect if needed and return the active client.
 
@@ -282,6 +359,8 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
     async def shutdown(self) -> None:
         """Cleanly tear down the connection."""
         await self._teardown_client()
+        if self._state_changed:
+            await self._store.async_save(self._stored_state())
 
     # ------------------------------------------------------------------
     # Commands
@@ -379,6 +458,7 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         if self.data is not None:
             self.data = dataclasses.replace(self.data, **changes)
         self.async_update_listeners()
+        self._schedule_store_save()
 
     # ------------------------------------------------------------------
     # Polling
@@ -451,6 +531,20 @@ async def _default_ble_device_lookup(
     except ImportError:
         return None
     return async_ble_device_from_address(hass, mac, connectable=connectable)
+
+
+def _stored_percent(value: Any) -> bool:
+    return type(value) is int and 0 <= value <= 100
+
+
+def _stored_rgb(value: Any) -> RGB | None:
+    if (
+        isinstance(value, (list, tuple))
+        and len(value) == 3
+        and all(type(channel) is int and 0 <= channel <= 255 for channel in value)
+    ):
+        return (value[0], value[1], value[2])
+    return None
 
 
 # Re-export for type-checkers

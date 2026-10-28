@@ -18,8 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   second mask byte, and an HA light-service test checking unchanged neighbours.
 - Per-bulb relative brightness in the standard HA light UI, using H7015 app-captured
   V2 brightness packets with a separate selection mask and matching protocol helpers.
+- Selected-bulb relative-brightness slider and percentage in the custom Lovelace card,
+  with unknown/unavailable states, release-to-send pacing, and visible service errors.
+- Local HA storage for main settings, bulb colors, non-black restore colors, and
+  relative brightness across reloads/restarts, without replaying control commands.
 
 ### Changed
+- Standard HA entities now use distinct string-lights and individual-bulb icons,
+  with off-state variants provided by native icon translations.
 - Replaced GitHub Actions workflows with Forgejo automation; retained issue
   templates and HACS metadata for optional GitHub-mirror compatibility.
 - Removed owner-specific project links and codeowner metadata, except the required
@@ -27,8 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corrected development setup instructions for mutually exclusive dependency extras.
 
 ### Fixed
+- Scene snapshots now restore known whole-string and lit-bulb brightness alongside
+  colors; unknown brightness stays unspecified.
 - Bulb off/on now restores the last non-black commanded colour instead of white;
-  this in-memory cache also follows whole-string colour commands.
+  the remembered colour also follows whole-string colour commands and survives reloads.
 - Successful manual bulb colour and relative-brightness commands clear stale
   scene/music effect state on the main entity; failed writes retain previous state.
 - Successful commands now notify coordinator listeners immediately, so whole-string

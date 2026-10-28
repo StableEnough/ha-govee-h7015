@@ -10,6 +10,7 @@ import voluptuous as vol
 from homeassistant.const import Platform
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.storage import Store
 from homeassistant.util import slugify
 
 from .const import (
@@ -92,6 +93,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
     try:
+        await coordinator.async_load_state()
         await coordinator.async_config_entry_first_refresh()
     except Exception:
         # First refresh failed — clean up the coordinator we just stored
@@ -148,6 +150,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove remembered settings when the integration entry is deleted."""
+    await Store(hass, 1, f"{DOMAIN}_{entry.entry_id}").async_remove()
+
+
 async def _handle_set_bulb(call: ServiceCall) -> None:
     """Handle the set_bulb service call.
 
@@ -202,7 +209,7 @@ async def _handle_set_bulb(call: ServiceCall) -> None:
 async def _handle_snapshot_scene(call: ServiceCall) -> None:
     """Handle the snapshot_scene service call.
 
-    Snapshots the current per-bulb colors and creates a HA scene using
+    Snapshots current per-bulb colors and known brightness levels using
     the built-in scene.create service. The scene can then be activated
     from the dashboard, automations, or voice commands.
 
@@ -275,6 +282,8 @@ async def _handle_snapshot_scene(call: ServiceCall) -> None:
         # Main light entity — ensure it's on
         if main_entity_id:
             entities[main_entity_id] = {"state": "on"}
+            if (brightness := coord.device_state.brightness) is not None:
+                entities[main_entity_id]["brightness"] = int(brightness * 255 / 100)
 
         # Per-bulb entities
         bulb_colors = coord.get_all_bulb_colors()
@@ -287,6 +296,8 @@ async def _handle_snapshot_scene(call: ServiceCall) -> None:
                     "state": "on",
                     "rgb_color": list(rgb),
                 }
+                if (brightness := coord.get_bulb_brightness(bulb_index)) is not None:
+                    entities[entity_id]["brightness"] = int(brightness * 255 / 100)
 
     # Create the scene via HA's built-in scene.create service
     await hass.services.async_call(

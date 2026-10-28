@@ -34,8 +34,8 @@
       "description": "Set the color of a single bulb on a Govee H7015 string light."
     },
     "snapshot_scene": {
-      "name": "Snapshot current colors as scene",
-      "description": "Save the current per-bulb colors as a HA scene you can recall later."
+      "name": "Snapshot colors and brightness as scene",
+      "description": "Save bulb colors and known whole-string and lit-bulb brightness as a temporary HA scene. Unknown levels are omitted; off bulbs remain off."
     },
     "send_raw": {
       "name": "Send raw packet (diagnostic)",

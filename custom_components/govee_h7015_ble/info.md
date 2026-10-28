@@ -18,10 +18,13 @@ using command packets matched to a user-provided H7015 field-test report.
 - **Music modes** (experimental): energic, spectrum, rolling, rhythm.
 - **Per-bulb RGBIC control** — 15 individual light entities with independent
   colour and relative-brightness controls in the HA UI.
-- **Custom Lovelace card** — visual bulb editor with color pickers and
-  presets (Rainbow, Warm White, etc.).
-- **HA Scenes support** — snapshot per-bulb colors as a scene and recall
-  with one tap.
+- **State-aware icons** — string-lights for the main entity and individual bulbs
+  for the per-bulb entities, each with an off-state variant. Icons set manually
+  in HA entity settings still take precedence.
+- **Custom Lovelace card** — visual bulb editor with color pickers, selected-bulb
+  brightness, and presets (Rainbow, Warm White, etc.).
+- **HA Scenes support** — snapshot colors and known whole-string/lit-bulb brightness
+  as a scene and recall with one tap.
 - **Configurable heartbeat polling interval** via Options UI (Settings → Configure).
 - **Diagnostics download** for easy bug reporting.
 - **No cloud dependency** — works fully offline.
@@ -59,8 +62,11 @@ entities; whole-string colour changes also refresh the 15 bulb entities.
 
 Turning a bulb off sends black but retains its last non-black colour; turning it
 back on restores that colour, or white if unknown. Per-bulb brightness is relative
-to the separate whole-string setting, stays unknown until commanded, and survives
-bulb off/on. Both caches last only until the integration reloads.
+to the separate whole-string setting and stays unknown until commanded.
+Main settings, bulb colors, non-black restore colors, and relative brightness
+survive integration reloads and HA restarts in HA's local storage. They remain
+assumed state, not hardware readback. Loading them does not replay control commands;
+removing the integration entry deletes them.
 A successful manual bulb colour or relative-brightness command clears the main
 entity's scene/music effect; a failed write leaves the previous state intact.
 
@@ -112,7 +118,8 @@ via HACS (Dashboard category) for a visual bulb-by-bulb color editor with:
 - 12 preset patterns (Rainbow, Warm White, Fireplace, Ocean, Christmas, Sunset,
   Flag, Candy Cane, All Red/Green/Blue, All Off)
 - Click-to-edit color picker for each bulb
-- One-click **Save as Scene** button that snapshots current colors as a HA scene
+- Selected-bulb relative-brightness slider (1–100%) and percentage; unknown until commanded
+- One-click **Save as Scene** button that snapshots colors and known brightness
 
 ### Using the `set_bulb` service
 
@@ -133,7 +140,7 @@ data:
 
 ### One-click from the card
 
-1. Set the bulbs to the colors you want (via presets or individual color pickers)
+1. Set bulb colors and brightness, plus whole-string brightness if needed
 2. Click **💾 Save as Scene**
 3. Enter a name (e.g. "Christmas", "Date Night", "Patriotic")
 4. Click **Save Scene**
@@ -149,8 +156,10 @@ data:
   scene_name: Christmas
 ```
 
-This snapshots all 15 bulb colors and creates a HA scene using the built-in
-`scene.create` service. The scene can then be activated from the dashboard,
+This saves bulb colors/on-off states and known whole-string and lit-bulb brightness
+using `scene.create`. Unknown brightness is omitted, not guessed. Off bulbs stay off;
+native HA light scenes do not recall their latent brightness. The main string is
+turned on to display the saved pattern. Activate the scene from the dashboard,
 automations, or voice commands. The name is normalized to a scene ID (for example,
 `Date Night` becomes `scene.date_night`). Scenes created this way last until HA
 restarts; use the native Scenes UI below for a persistent scene.

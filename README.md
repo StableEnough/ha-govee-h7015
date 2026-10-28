@@ -71,8 +71,8 @@ HACS cannot install directly from Forgejo. If a public GitHub mirror is maintain
 - **Color temperature** (experimental; H7015 white-mode encoding remains unverified)
 - **12 classic scene names** + 4 experimental music modes as HA effects
 - **15 per-bulb light entities** with individual RGB and relative brightness control
-- **Custom Lovelace card** with 12 preset patterns + visual bulb editor
-- **One-click scene creation** via `snapshot_scene` service or card button
+- **Custom Lovelace card** with 12 preset patterns, colour picker, and selected-bulb brightness
+- **One-click scene creation** including known whole-string and lit-bulb brightness
 - **Option flow** for configurable heartbeat polling interval (5–3600s)
 - **Diagnostics platform** for easy bug reporting
 - Uses HA-recommended `bleak-retry-connector` for reliable BLE connections
@@ -86,13 +86,16 @@ Selected-bulb relative brightness also matches H7015 app HCI captures; automated
 tests use simulated BLE. Dynamic RGBIC scenes, DIY, music, gradient, and
 white-temperature commands remain unverified.
 
-Each bulb remembers its last non-black commanded colour while the integration
-is loaded, so off/on restores that colour (white if none is known). Its brightness
-slider controls relative brightness independently of the whole-string slider;
-the value stays unknown until commanded and is retained across bulb off/on.
+Each bulb remembers its last non-black commanded colour, so off/on restores that
+colour (white if none is known). Its brightness slider controls relative brightness
+independently of the whole-string slider; the value stays unknown until commanded.
+Main settings, bulb colours, restore colours, and relative brightness survive
+integration reloads and HA restarts in HA's local storage. Loading them does not
+send control commands to the lights. These are assumed settings, not hardware
+readback, and cannot track changes made outside Home Assistant. Removing the
+integration entry deletes its remembered settings.
 A successful manual bulb colour or brightness change clears the main entity's
-scene/music effect. These caches are not persisted across integration reloads
-and cannot track changes made outside Home Assistant.
+scene/music effect.
 
 See [`custom_components/govee_h7015_ble/info.md`](custom_components/govee_h7015_ble/info.md)
 for full integration docs.

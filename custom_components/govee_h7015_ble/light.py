@@ -73,6 +73,7 @@ class H7015Light(CoordinatorEntity[H7015Coordinator], LightEntity):
     _attr_has_entity_name = True
     _attr_assumed_state = True
     _attr_name = None  # Use device name
+    _attr_translation_key = "string"
     _attr_supported_features = LightEntityFeature.EFFECT
     _attr_supported_color_modes = {ColorMode.RGB, ColorMode.COLOR_TEMP}
     _attr_effect_list = EFFECTS
@@ -217,6 +218,7 @@ class H7015BulbLight(CoordinatorEntity[H7015Coordinator], LightEntity):
 
     _attr_has_entity_name = True
     _attr_assumed_state = True
+    _attr_translation_key = "bulb"
     _attr_supported_color_modes = {ColorMode.RGB}
     _attr_entity_category = EntityCategory.CONFIG
 

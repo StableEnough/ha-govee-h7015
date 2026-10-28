@@ -575,8 +575,9 @@ async def test_coordinator_tracks_bulb_colors(hass) -> None:  # type: ignore[no-
         assert len(all_colors) == 2
 
 
-async def test_snapshot_scene_service(hass) -> None:  # type: ignore[no-untyped-def]
-    """The snapshot service creates a real HA scene that restores bulb colors."""
+@pytest.mark.parametrize("known_brightness", [True, False])
+async def test_snapshot_scene_service(hass, known_brightness: bool) -> None:  # type: ignore[no-untyped-def]
+    """Real scene recall restores known brightness and does not invent unknown levels."""
     entry = _make_config_entry("test_entry_8")
     entry.add_to_hass(hass)
 
@@ -595,6 +596,9 @@ async def test_snapshot_scene_service(hass) -> None:  # type: ignore[no-untyped-
         # Set some bulb colors
         await coordinator.set_bulb(0, 255, 0, 0)  # red
         await coordinator.set_bulb(1, 0, 255, 0)  # green
+        if known_brightness:
+            await coordinator.set_brightness(34)
+            await coordinator.set_bulb_brightness(0, 51)
 
         # Register a device in the device registry
         from homeassistant.helpers import device_registry as dr
@@ -623,12 +627,67 @@ async def test_snapshot_scene_service(hass) -> None:  # type: ignore[no-untyped-
 
         await coordinator.set_bulb(0, 0, 0, 255)
         await coordinator.set_bulb(1, 0, 0, 255)
+        await coordinator.set_brightness(83)
+        await coordinator.set_bulb_brightness(0, 75)
         await hass.services.async_call(
             "scene", "turn_on", {"entity_id": "scene.test_scene"}, blocking=True
         )
         await hass.async_block_till_done()
         assert coordinator.get_bulb_color(0) == (255, 0, 0)
         assert coordinator.get_bulb_color(1) == (0, 255, 0)
+        assert coordinator.device_state.brightness == (34 if known_brightness else 83)
+        assert coordinator.get_bulb_brightness(0) == (51 if known_brightness else 75)
+        assert coordinator.get_bulb_brightness(1) is None
+
+
+async def test_entry_reload_restores_assumed_settings_without_replay(hass) -> None:  # type: ignore[no-untyped-def]
+    """Reload retains off-bulb restoration and effect without replaying settings."""
+    from custom_components.govee_h7015_ble.protocol import Scene, pkt_keepalive
+
+    entry = _make_config_entry("remembered_settings")
+    entry.add_to_hass(hass)
+    client = MagicMock()
+    client.write_gatt_char = AsyncMock()
+    with patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock(return_value=client)):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coordinator: H7015Coordinator = hass.data[DOMAIN][entry.entry_id]
+        await coordinator.set_power(True)
+        await coordinator.set_brightness(34)
+        await coordinator.set_color(242, 53, 36)
+        await coordinator.set_bulb_brightness(1, 51)
+        await coordinator.set_bulb(1, 0, 0, 0)
+        await coordinator.set_scene(Scene.RAINBOW)
+
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        client.write_gatt_char.reset_mock()
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        client.write_gatt_char.assert_awaited_once_with(
+            "00010203-0405-0607-0809-0a0b0c0d2b11", pkt_keepalive(), response=True
+        )
+        main = hass.states.get("light.patio_lights")
+        bulb = hass.states.get("light.patio_lights_bulb_2")
+        assert main is not None
+        assert bulb is not None
+        assert main.state == "on"
+        assert main.attributes["brightness"] == 86
+        assert main.attributes["effect"] == "rainbow"
+        assert bulb.state == "off"
+        assert bulb.attributes["assumed_state"] is True
+
+        await hass.services.async_call(
+            "light", "turn_on", {"entity_id": bulb.entity_id}, blocking=True
+        )
+        bulb = hass.states.get(bulb.entity_id)
+        assert bulb is not None
+        assert bulb.attributes["rgb_color"] == (242, 53, 36)
+        assert bulb.attributes["brightness"] == 130
+        assert await hass.config_entries.async_remove(entry.entry_id)
+        restored = H7015Coordinator(hass, "AA:BB:CC:DD:EE:FF", "Patio Lights", 60, entry.entry_id)
+        await restored.async_load_state()
+        assert restored.device_state.power is None
+        assert restored.get_bulb_color(1) is None
 
 
 async def test_options_flow_updates_interval_and_reloads(hass) -> None:  # type: ignore[no-untyped-def]

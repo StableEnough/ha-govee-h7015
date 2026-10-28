@@ -1,0 +1,18 @@
+{
+  "entity": {
+    "light": {
+      "string": {
+        "default": "mdi:string-lights",
+        "state": {
+          "off": "mdi:string-lights-off"
+        }
+      },
+      "bulb": {
+        "default": "mdi:lightbulb-on",
+        "state": {
+          "off": "mdi:lightbulb-outline"
+        }
+      }
+    }
+  }
+}
