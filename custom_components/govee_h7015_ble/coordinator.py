@@ -356,6 +356,10 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         """Write an arbitrary packet without touching cached state (diagnostics)."""
         await self._send(packet)
 
+    async def send_raw(self, packet: bytes) -> None:
+        """Write an arbitrary packet without touching cached state (diagnostics)."""
+        await self._send(packet)
+
     async def set_color_temperature(self, kelvin: int) -> None:
         """Set color temperature (warm/cold white) in Kelvin.
 
