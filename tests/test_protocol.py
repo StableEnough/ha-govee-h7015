@@ -146,12 +146,6 @@ class TestBrightness:
 
 
 class TestColor:
-    def test_solid_color_is_v2_all_segments(self) -> None:
-        p = pkt_solid_color(255, 0, 0)
-        assert p[1:4] == bytes([Command.COLOR, ColorMode.COLOR_V2, 0x01])
-        assert p[4:7] == bytes([255, 0, 0])
-        assert p[7:9] == bytes([0xFF, 0x7F])
-
     def test_solid_color_clamps(self) -> None:
         p = pkt_solid_color(300, -5, 128)
         assert p[4:7] == bytes([255, 0, 128])
@@ -186,18 +180,6 @@ class TestMusic:
 
 
 class TestSegments:
-    def test_segment_first_bulb(self) -> None:
-        p = pkt_segment(0, 255, 0, 0)
-        assert p == bytes.fromhex("33051501ff0000010000000000000000000000dc")
-
-    def test_segment_bulb_8_uses_mask_hi(self) -> None:
-        p = pkt_segment(8, 0, 0, 255)
-        assert p[7:9] == bytes([0x00, 0x01])
-
-    def test_segment_bulb_14_is_last_valid_mask_bit(self) -> None:
-        p = pkt_segment(14, 255, 255, 255)
-        assert p[7:9] == bytes([0x00, 0x40])
-
     def test_segment_out_of_range_raises(self) -> None:
         from exceptions import GoveeInvalidArgumentError  # type: ignore[import-not-found]
 

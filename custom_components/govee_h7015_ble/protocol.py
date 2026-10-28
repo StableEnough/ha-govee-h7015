@@ -173,11 +173,11 @@ def pkt_brightness(percent: int) -> RawPacket:
 
 
 def _color_v2(rgb: RGB, mask: tuple[int, int]) -> RawPacket:
-    return build_packet(b"\x33\x05", bytes([ColorMode.COLOR_V2, 0x01, *rgb, *mask]))
+    return build_packet(b"\x33\x05", bytes([ColorMode.COLOR_V2, 0x01, *rgb, 0, 0, 0, 0, 0, *mask]))
 
 
 def pkt_solid_color(r: int, g: int, b: int) -> RawPacket:
-    """Solid color on all segments (V2, firmware >= 1.06): 33 05 15 01 r g b FF 7F."""
+    """Solid RGB matching H7015 app captures; selection bytes are at offsets 12-13."""
     return _color_v2(_clamp_rgb((r, g, b)), _segment_mask(tuple(range(BULB_COUNT))))
 
 
@@ -250,7 +250,7 @@ def pkt_gradient(on: bool) -> RawPacket:
 
 
 def pkt_segment(bulb: BulbIndex, r: int, g: int, b: int) -> RawPacket:
-    """Set a single bulb's color (V2: 33 05 15 01 r g b maskLo maskHi)."""
+    """Set one bulb using the V2 layout; individual selection remains unverified."""
     if not 0 <= bulb < BULB_COUNT:
         raise GoveeInvalidArgumentError(f"bulb index must be 0..{BULB_COUNT - 1}, got {bulb}")
     return _color_v2(_clamp_rgb((r, g, b)), _segment_mask((bulb,)))

@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corrected development setup instructions for mutually exclusive dependency extras.
 
 ### Fixed
+- Matched solid RGB packets to real H7015/Govee Home HCI captures: restored five
+  intervening bytes before the selection mask at offsets 12–13 in both clients.
+  Shared per-bulb encoding follows this layout but remains hardware-unverified.
 - Corrected H7015 brightness to raw percent, RGB/per-bulb writes to the reported
   V2 segment-mask format, and classic scenes to the reported big-endian IDs
   (Crossing 21, Rainbow 22), with matching standalone packet behavior.

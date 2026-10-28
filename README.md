@@ -334,8 +334,8 @@ available. This BLE integration is the only local-control option.
 
 ## How the Govee BLE protocol works
 
-The corrected H7015 command path follows a user-provided protocol specification
-based on Govee Home 7.6.21 and reported test-APK field results:
+The H7015 command path follows reported field results, with solid RGB, power,
+and 50% brightness additionally checked against a Govee Home 7.7.01 HCI capture:
 
 - GATT service: `00010203-0405-0607-0809-0a0b0c0d1910`
 - Write and notify char: `00010203-0405-0607-0809-0a0b0c0d2b11`
@@ -346,13 +346,20 @@ based on Govee Home 7.6.21 and reported test-APK field results:
 - Bytes 2-18: payload
 - Byte 19: XOR checksum of bytes 0-18
 - Brightness: `33 04 <percent>` with percent clamped to 1–100
-- RGB V2: `33 05 15 01 R G B maskLo maskHi`; all 15 segments use `FF 7F`
+- RGB V2: `33 05 15 01 R G B 00 00 00 00 00 maskLo maskHi`; all 15 segments use `FF 7F`
 - Classic scenes: `33 05 04 codeHi codeLo`; Crossing is 21 and Rainbow is 22
 
 The 12 exposed classic scene names come from the app's built-in catalogue, not a
 claim that all of them have been individually verified on every H7015. Speculative
 H6127-derived scene names have been removed. Classic scene byte order follows the
 reported H7015 field vectors, not the different shared scene helper found in 7.7.02.
+
+The 2026-10-27 H7015 capture places `FF 7F` at zero-based offsets 12–13, not
+7–8 as in the earlier field specification. Red and green full packets are covered
+by capture-based regressions. Individual bulb masks use the same corrected layout,
+but their interpretation still needs a per-bulb capture; white, DIY, and scenes
+were not verified by this capture. The five intervening bytes are zero for captured
+red/green commands; their wider meaning is not established.
 
 Legacy reference material (not H7015 hardware confirmation):
 BeauJBurroughs/Govee-H6127-Reverse-Engineering,

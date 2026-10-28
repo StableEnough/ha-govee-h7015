@@ -89,7 +89,7 @@ class MockH7015Client:
             sub_mode = data[2]
             if sub_mode == 0x15 and len(data) == 20 and data[3] == 0x01:
                 self._mode = 0x15
-                if data[7:9] == b"\xff\x7f":
+                if data[12:14] == b"\xff\x7f":
                     self._rgb = (data[4], data[5], data[6])
             elif sub_mode == 0x02 and len(data) >= 6:  # Legacy, unverified
                 self._mode = 0x02
