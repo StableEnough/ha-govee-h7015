@@ -11,7 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Forgejo CI for locked Python 3.13 dependencies, Ruff, standalone mypy, Lovelace
   JavaScript syntax, pytest/Hypothesis, Hassfest, and redacted Gitleaks scans.
 - Tag releases publish a manual-install integration ZIP after blocking checks pass.
+- `govee_h7015_ble.send_raw` diagnostic service: sends hex bytes (zero-padded,
+  XOR checksum added) to the lights for protocol verification on real hardware.
 - Repository-wide agent guidance and privacy rules for files and Git identities.
+- H7015 app capture regressions for individual-bulb RGB masks, including the
+  second mask byte, and an HA light-service test checking unchanged neighbours.
+- Per-bulb relative brightness in the standard HA light UI, using H7015 app-captured
+  V2 brightness packets with a separate selection mask and matching protocol helpers.
 
 ### Changed
 - Replaced GitHub Actions workflows with Forgejo automation; retained issue
@@ -21,9 +27,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corrected development setup instructions for mutually exclusive dependency extras.
 
 ### Fixed
+- Bulb off/on now restores the last non-black commanded colour instead of white;
+  this in-memory cache also follows whole-string colour commands.
+- Successful manual bulb colour and relative-brightness commands clear stale
+  scene/music effect state on the main entity; failed writes retain previous state.
+- Successful commands now notify coordinator listeners immediately, so whole-string
+  colour changes refresh all bulb entities without waiting for the next poll.
+  Per-bulb state publication is owned by the coordinator for every caller.
 - Matched solid RGB packets to real H7015/Govee Home HCI captures: restored five
   intervening bytes before the selection mask at offsets 12–13 in both clients.
-  Shared per-bulb encoding follows this layout but remains hardware-unverified.
+  Selected-bulb masks now also have H7015 app captures and user-confirmed physical
+  operation; documented the normal app picker separately from whole-string Color Tool.
 - Corrected H7015 brightness to raw percent, RGB/per-bulb writes to the reported
   V2 segment-mask format, and classic scenes to the reported big-endian IDs
   (Crossing 21, Rainbow 22), with matching standalone packet behavior.

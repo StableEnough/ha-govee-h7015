@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import voluptuous as vol
 
 # Make the integration importable BEFORE any HA fixtures run.
 # The project root must be on sys.path for `import custom_components` to work.
@@ -277,6 +278,48 @@ async def test_set_bulb_service_requires_target(hass) -> None:  # type: ignore[n
         mock_set_bulb.assert_not_called()
 
 
+async def test_send_raw_service_pads_and_checksums(hass) -> None:  # type: ignore[no-untyped-def]
+    """send_raw zero-pads to 20 bytes with an XOR checksum, and rejects bad input."""
+    entry = _make_config_entry("test_entry_raw")
+    entry.add_to_hass(hass)
+
+    async def mock_update(self):  # type: ignore[no-untyped-def]
+        return H7015State()
+
+    with (
+        patch.object(H7015Coordinator, "_async_update_data", mock_update),
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()),
+        patch.object(H7015Coordinator, "send_raw", new=AsyncMock()) as mock_send_raw,
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        from homeassistant.helpers import device_registry as dr
+
+        device = dr.async_get(hass).async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, "AABBCCDDEEFF")},
+            name="Patio Lights",
+        )
+
+        await hass.services.async_call(
+            DOMAIN,
+            "send_raw",
+            {"hex": "33 05 02 FF 00 00", "device_id": [device.id]},
+            blocking=True,
+        )
+        sent = mock_send_raw.call_args.args[0]
+        assert sent == bytes.fromhex("330502ff0000") + bytes(13) + b"\xcb"
+
+        mock_send_raw.reset_mock()
+        for bad in ("zz", "", "00" * 20):
+            with pytest.raises(vol.Invalid):
+                await hass.services.async_call(
+                    DOMAIN, "send_raw", {"hex": bad, "device_id": [device.id]}, blocking=True
+                )
+        mock_send_raw.assert_not_called()
+
+
 async def test_per_bulb_entities_created(hass) -> None:  # type: ignore[no-untyped-def]
     """Setup should create 1 main light + 15 per-bulb light entities."""
     entry = _make_config_entry("test_entry_5")
@@ -303,37 +346,197 @@ async def test_per_bulb_entities_created(hass) -> None:  # type: ignore[no-untyp
             assert bulb_entity_id in light_entities, f"missing {bulb_entity_id}"
 
 
-async def test_per_bulb_entity_turn_on_sets_color(hass) -> None:  # type: ignore[no-untyped-def]
-    """Turning on a per-bulb entity should call coordinator.set_bulb."""
+async def test_per_bulb_color_matches_h7015_capture(hass) -> None:  # type: ignore[no-untyped-def]
+    """The HA bulb-2 colour action matches the capture without changing neighbours."""
     entry = _make_config_entry("test_entry_6")
     entry.add_to_hass(hass)
+    client = MagicMock()
+    client.write_gatt_char = AsyncMock()
 
     async def mock_update(self):  # type: ignore[no-untyped-def]
         return H7015State(power=True)
 
     with (
         patch.object(H7015Coordinator, "_async_update_data", mock_update),
-        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock()),
-        patch.object(H7015Coordinator, "set_bulb", new=AsyncMock()) as mock_set_bulb,
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock(return_value=client)),
     ):
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
-
-        # Turn on bulb 1 (entity_id is 1-indexed, but coordinator uses 0-indexed)
+        coordinator: H7015Coordinator = hass.data[DOMAIN][entry.entry_id]
         await hass.services.async_call(
             "light",
             "turn_on",
-            {"entity_id": "light.patio_lights_bulb_1", "rgb_color": [255, 0, 0]},
+            {"entity_id": "light.patio_lights", "rgb_color": [242, 53, 36]},
+            blocking=True,
+        )
+        client.write_gatt_char.reset_mock()
+
+        await hass.services.async_call(
+            "light",
+            "turn_on",
+            {"entity_id": "light.patio_lights_bulb_2", "rgb_color": [0, 0, 255]},
             blocking=True,
         )
 
-        # Verify set_bulb was called with bulb=0 (0-indexed), rgb=(255,0,0)
-        # When patch.object replaces an instance method, the mock receives
-        # args without self: (bulb_index, r, g, b)
-        mock_set_bulb.assert_called_once()
-        call_args = mock_set_bulb.call_args
-        assert call_args.args[0] == 0  # bulb index (0-indexed)
-        assert call_args.args[1:] == (255, 0, 0)  # r, g, b
+        client.write_gatt_char.assert_awaited_once_with(
+            "00010203-0405-0607-0809-0a0b0c0d2b11",
+            bytes.fromhex("330515010000ff000000000002000000000000df"),
+            response=True,
+        )
+        for bulb in range(15):
+            expected = (0, 0, 255) if bulb == 1 else (242, 53, 36)
+            assert coordinator.get_bulb_color(bulb) == expected
+            state = hass.states.get(f"light.patio_lights_bulb_{bulb + 1}")
+            assert state is not None
+            assert state.attributes["rgb_color"] == expected
+
+
+@pytest.mark.parametrize("source", ["string", "bulb"])
+async def test_bulb_restores_last_colour_after_off(hass, source: str) -> None:  # type: ignore[no-untyped-def]
+    """Turning a bulb back on restores colour from either command path."""
+    entry = _make_config_entry(f"restore_{source}")
+    entry.add_to_hass(hass)
+    client = MagicMock()
+    client.write_gatt_char = AsyncMock()
+
+    async def mock_update(self):  # type: ignore[no-untyped-def]
+        return H7015State(power=True)
+
+    with (
+        patch.object(H7015Coordinator, "_async_update_data", mock_update),
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock(return_value=client)),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coordinator: H7015Coordinator = hass.data[DOMAIN][entry.entry_id]
+        if source == "string":
+            await coordinator.set_color(242, 53, 36)
+        else:
+            await coordinator.set_bulb(1, 242, 53, 36)
+
+        for _ in range(2):
+            await hass.services.async_call(
+                "light", "turn_off", {"entity_id": "light.patio_lights_bulb_2"}, blocking=True
+            )
+            assert coordinator.get_bulb_color(1) == (0, 0, 0)
+            state = hass.states.get("light.patio_lights_bulb_2")
+            assert state is not None
+            assert state.state == "off"
+
+            await hass.services.async_call(
+                "light", "turn_on", {"entity_id": "light.patio_lights_bulb_2"}, blocking=True
+            )
+            assert coordinator.get_bulb_color(1) == (242, 53, 36)
+            state = hass.states.get("light.patio_lights_bulb_2")
+            assert state is not None
+            assert state.state == "on"
+            assert state.attributes["rgb_color"] == (242, 53, 36)
+            assert client.write_gatt_char.call_args.args[1][4:7] == bytes((242, 53, 36))
+
+
+async def test_bulb_brightness_preserves_colour_and_neighbours(hass) -> None:  # type: ignore[no-untyped-def]
+    """Relative brightness affects only the selected bulb and survives off/on."""
+    entry = _make_config_entry("bulb_brightness")
+    entry.add_to_hass(hass)
+    client = MagicMock()
+    client.write_gatt_char = AsyncMock()
+    with (
+        patch.object(
+            H7015Coordinator,
+            "_async_update_data",
+            return_value=H7015State(power=True, brightness=34),
+        ),
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock(return_value=client)),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coordinator: H7015Coordinator = hass.data[DOMAIN][entry.entry_id]
+        await coordinator.set_color(242, 53, 36)
+        client.write_gatt_char.reset_mock()
+        await hass.services.async_call(
+            "light",
+            "turn_on",
+            {"entity_id": "light.patio_lights_bulb_2", "brightness": 191},
+            blocking=True,
+        )
+        client.write_gatt_char.assert_awaited_once_with(
+            "00010203-0405-0607-0809-0a0b0c0d2b11",
+            bytes.fromhex("330515024b020000000000000000000000000068"),
+            response=True,
+        )
+        assert coordinator.device_state.brightness == 34
+        for bulb in range(15):
+            state = hass.states.get(f"light.patio_lights_bulb_{bulb + 1}")
+            assert state is not None
+            assert state.attributes["rgb_color"] == (242, 53, 36)
+            assert state.attributes.get("brightness") == (191 if bulb == 1 else None)
+
+        for brightness, expected_state in ((0, "off"), (191, "on")):
+            await hass.services.async_call(
+                "light",
+                "turn_on",
+                {"entity_id": "light.patio_lights_bulb_2", "brightness": brightness},
+                blocking=True,
+            )
+            state = hass.states.get("light.patio_lights_bulb_2")
+            assert state is not None
+            assert state.state == expected_state
+        assert state.attributes["rgb_color"] == (242, 53, 36)
+        assert state.attributes["brightness"] == 191
+
+        client.write_gatt_char.side_effect = RuntimeError("radio failed")
+        from homeassistant.helpers.update_coordinator import UpdateFailed
+
+        with pytest.raises(UpdateFailed, match="radio failed"):
+            await coordinator.set_bulb_brightness(1, 25)
+        assert coordinator.get_bulb_brightness(1) == 75
+
+
+@pytest.mark.parametrize("effect", ["rainbow", "music_energic"])
+async def test_manual_bulb_change_clears_effect_after_success(hass, effect: str) -> None:  # type: ignore[no-untyped-def]
+    """Manual bulb writes clear a stale string effect, but failed writes do not."""
+    entry = _make_config_entry(f"manual_{effect}")
+    entry.add_to_hass(hass)
+    client = MagicMock()
+    client.write_gatt_char = AsyncMock()
+    with (
+        patch.object(H7015Coordinator, "_async_update_data", return_value=H7015State(power=True)),
+        patch.object(H7015Coordinator, "_ensure_connected", new=AsyncMock(return_value=client)),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        await hass.services.async_call(
+            "light",
+            "turn_on",
+            {"entity_id": "light.patio_lights", "effect": effect},
+            blocking=True,
+        )
+        coordinator: H7015Coordinator = hass.data[DOMAIN][entry.entry_id]
+        state = hass.states.get("light.patio_lights")
+        assert state is not None
+        assert state.attributes["effect"] == effect
+
+        client.write_gatt_char.side_effect = RuntimeError("radio failed")
+        from homeassistant.helpers.update_coordinator import UpdateFailed
+
+        with pytest.raises(UpdateFailed, match="radio failed"):
+            await coordinator.set_bulb(1, 0, 0, 255)
+        state = hass.states.get("light.patio_lights")
+        assert state is not None
+        assert state.attributes["effect"] == effect
+        assert coordinator.get_bulb_color(1) is None
+        client.write_gatt_char.side_effect = None
+
+        await hass.services.async_call(
+            "light",
+            "turn_on",
+            {"entity_id": "light.patio_lights_bulb_2", "rgb_color": [0, 0, 255]},
+            blocking=True,
+        )
+        state = hass.states.get("light.patio_lights")
+        assert state is not None
+        assert state.attributes.get("effect") is None
+        assert coordinator.device_state.mode == "manual"
 
 
 async def test_coordinator_tracks_bulb_colors(hass) -> None:  # type: ignore[no-untyped-def]

@@ -40,6 +40,7 @@ from .protocol import (
     pkt_power,
     pkt_scene,
     pkt_segment,
+    pkt_segment_brightness,
     pkt_solid_color,
 )
 
@@ -93,6 +94,8 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         # Per-bulb colors are last-commanded state, not hardware readback.
         # Changes made through the Govee app may leave this cache stale.
         self._bulb_colors: dict[int, RGB] = {}
+        self._bulb_restore_colors: dict[int, RGB] = {}
+        self._bulb_brightness: dict[int, int] = {}
         # Track consecutive connection failures for repair issue creation.
         self._consecutive_failures = 0
         self._repair_issue_created = False
@@ -128,6 +131,14 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
     def get_bulb_color(self, bulb: int) -> RGB | None:
         """Get the last-commanded color for a specific bulb."""
         return self._bulb_colors.get(bulb)
+
+    def get_bulb_restore_color(self, bulb: int) -> RGB:
+        """Return the last non-black commanded colour, or white if unknown."""
+        return self._bulb_restore_colors.get(bulb, (255, 255, 255))
+
+    def get_bulb_brightness(self, bulb: int) -> int | None:
+        """Return last-commanded relative percent, independent of string brightness."""
+        return self._bulb_brightness.get(bulb)
 
     def get_all_bulb_colors(self) -> dict[int, RGB]:
         """Get all bulb colors (snapshot for scene creation)."""
@@ -314,6 +325,8 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         await self._send(packet)
         rgb = (packet[4], packet[5], packet[6])
         self._bulb_colors = dict.fromkeys(range(BULB_COUNT), rgb)
+        if rgb != (0, 0, 0):
+            self._bulb_restore_colors = dict(self._bulb_colors)
         self._update_state(rgb=rgb, mode="manual")
 
     async def set_scene(self, scene: Scene) -> None:
@@ -328,6 +341,20 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
         packet = pkt_segment(bulb, r, g, b)
         await self._send(packet)
         self._bulb_colors[bulb] = (packet[4], packet[5], packet[6])
+        if self._bulb_colors[bulb] != (0, 0, 0):
+            self._bulb_restore_colors[bulb] = self._bulb_colors[bulb]
+        self._update_state(mode="manual")
+
+    async def set_bulb_brightness(self, bulb: BulbIndex, percent: int) -> None:
+        """Set one bulb's relative brightness without scaling its cached colour."""
+        packet = pkt_segment_brightness(bulb, percent)
+        await self._send(packet)
+        self._bulb_brightness[bulb] = packet[4]
+        self._update_state(mode="manual")
+
+    async def send_raw(self, packet: bytes) -> None:
+        """Write an arbitrary packet without touching cached state (diagnostics)."""
+        await self._send(packet)
 
     async def set_color_temperature(self, kelvin: int) -> None:
         """Set color temperature (warm/cold white) in Kelvin.
@@ -346,11 +373,12 @@ class H7015Coordinator(DataUpdateCoordinator[H7015State]):
 
         ``self.data`` is what HA entities read via ``coordinator.data``.
         ``self._device_state`` is the fallback before the first poll.
-        Both must be updated so the entity immediately reflects commands.
+        Notify all entities so sibling bulbs immediately reflect whole-string commands.
         """
         self._device_state = dataclasses.replace(self._device_state, **changes)
         if self.data is not None:
             self.data = dataclasses.replace(self.data, **changes)
+        self.async_update_listeners()
 
     # ------------------------------------------------------------------
     # Polling

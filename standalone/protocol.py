@@ -250,10 +250,20 @@ def pkt_gradient(on: bool) -> RawPacket:
 
 
 def pkt_segment(bulb: BulbIndex, r: int, g: int, b: int) -> RawPacket:
-    """Set one bulb using the V2 layout; individual selection remains unverified."""
+    """Set one bulb with the H7015-captured V2 layout and LSB-first selection mask."""
     if not 0 <= bulb < BULB_COUNT:
         raise GoveeInvalidArgumentError(f"bulb index must be 0..{BULB_COUNT - 1}, got {bulb}")
     return _color_v2(_clamp_rgb((r, g, b)), _segment_mask((bulb,)))
+
+
+def pkt_segment_brightness(bulb: BulbIndex, percent: int) -> RawPacket:
+    """Set captured H7015 relative brightness without changing the bulb's RGB."""
+    if not 0 <= bulb < BULB_COUNT:
+        raise GoveeInvalidArgumentError(f"bulb index must be 0..{BULB_COUNT - 1}, got {bulb}")
+    return build_packet(
+        b"\x33\x05",
+        bytes([ColorMode.COLOR_V2, 0x02, brightness_to_raw(percent), *_segment_mask((bulb,))]),
+    )
 
 
 def pkt_multi_segment(pairs: list[tuple[BulbIndex, int, int, int]]) -> list[RawPacket]:
@@ -461,6 +471,7 @@ __all__ = [
     "pkt_power",
     "pkt_scene",
     "pkt_segment",
+    "pkt_segment_brightness",
     "pkt_solid_color",
     "pkt_warm_white",
     "raw_to_brightness",

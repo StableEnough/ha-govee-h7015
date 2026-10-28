@@ -14,6 +14,7 @@ from homeassistant.util import slugify
 
 from .const import (
     ATTR_BULB,
+    ATTR_HEX,
     ATTR_RGB,
     ATTR_SCENE_NAME,
     CONF_MAC,
@@ -22,10 +23,12 @@ from .const import (
     DEFAULT_NAME,
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
+    SERVICE_SEND_RAW,
     SERVICE_SET_BULB,
     SERVICE_SNAPSHOT_SCENE,
 )
 from .coordinator import H7015Coordinator
+from .protocol import build_packet
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -50,6 +53,25 @@ SNAPSHOT_SCENE_SCHEMA: Final = vol.Schema(
     {
         vol.Required(ATTR_SCENE_NAME): str,
         vol.Optional("device_id"): vol.Any(str, [str]),
+    }
+)
+
+
+def _hex_bytes(value: str) -> bytes:
+    """Parse 1-19 hex bytes (spaces allowed) for the diagnostic send_raw service."""
+    try:
+        data = bytes.fromhex(value)
+    except ValueError as exc:
+        raise vol.Invalid(f"not valid hex: {exc}") from exc
+    if not 1 <= len(data) <= 19:
+        raise vol.Invalid("give 1 to 19 bytes; the checksum byte is added for you")
+    return data
+
+
+SEND_RAW_SCHEMA: Final = vol.Schema(
+    {
+        vol.Required(ATTR_HEX): vol.All(str, _hex_bytes),
+        vol.Required("device_id"): vol.Any(str, [str]),
     }
 )
 
@@ -92,6 +114,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _handle_snapshot_scene,
             schema=SNAPSHOT_SCENE_SCHEMA,
         )
+    if not hass.services.has_service(DOMAIN, SERVICE_SEND_RAW):
+        hass.services.async_register(
+            DOMAIN, SERVICE_SEND_RAW, _handle_send_raw, schema=SEND_RAW_SCHEMA
+        )
 
     # Reload entry when options change
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
@@ -117,6 +143,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.services.async_remove(DOMAIN, SERVICE_SET_BULB)
         if hass.services.has_service(DOMAIN, SERVICE_SNAPSHOT_SCENE):
             hass.services.async_remove(DOMAIN, SERVICE_SNAPSHOT_SCENE)
+        if hass.services.has_service(DOMAIN, SERVICE_SEND_RAW):
+            hass.services.async_remove(DOMAIN, SERVICE_SEND_RAW)
     return unload_ok
 
 
@@ -162,13 +190,9 @@ async def _handle_set_bulb(call: ServiceCall) -> None:
             f"No Govee H7015 coordinator found for target device(s): {target_device_ids}"
         )
 
-    async def _set_bulb(coord: H7015Coordinator) -> None:
-        await coord.set_bulb(bulb, r, g, b)
-        coord.async_update_listeners()
-
     # Finish every target, then report failures instead of pretending success.
     results = await asyncio.gather(
-        *(_set_bulb(coord) for coord in target_coordinators), return_exceptions=True
+        *(coord.set_bulb(bulb, r, g, b) for coord in target_coordinators), return_exceptions=True
     )
     for result in results:
         if isinstance(result, Exception):
@@ -295,3 +319,22 @@ def _find_coordinator_for_device(
             if coord.mac.replace(":", "").upper() == mac_id:
                 return coord
     return None
+
+
+async def _handle_send_raw(call: ServiceCall) -> None:
+    """Send raw bytes (zero-padded, XOR checksum appended) to the targeted lights."""
+    packet = build_packet(call.data[ATTR_HEX])
+    raw = call.data["device_id"]
+    dev_reg = dr.async_get(call.hass)
+    coordinators: dict[str, H7015Coordinator] = call.hass.data.get(DOMAIN, {})
+    targets = [
+        coord
+        for dev_id in ([raw] if isinstance(raw, str) else raw)
+        if (dev := dev_reg.async_get(dev_id))
+        and (coord := _find_coordinator_for_device(dev, coordinators))
+    ]
+    if not targets:
+        raise HomeAssistantError(f"No Govee H7015 coordinator found for target device(s): {raw}")
+    _LOGGER.warning("send_raw TX %s", packet.hex())
+    for coord in targets:
+        await coord.send_raw(packet)

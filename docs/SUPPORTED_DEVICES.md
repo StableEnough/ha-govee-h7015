@@ -4,12 +4,18 @@
 
 | Model | Name | Protocol | Notes |
 |-------|------|----------|-------|
-| H7015 | Govee Outdoor String Lights (48ft, 15 bulbs) | BLE only | Reported field-tested power, raw-percent brightness, and V2 RGB (firmware ≥1.06.00); segment masks and classic scenes have partial field coverage. |
+| H7015 | Govee Outdoor String Lights (48ft, 15 bulbs) | BLE only | Reported field-tested power, raw-percent brightness, and V2 RGB (firmware ≥1.06.00); selected-bulb RGB has app HCI captures and user-confirmed physical operation. Classic scene coverage remains partial. |
 
 The integration's corrected packets match a user-provided H7015 hardware-test
 report. Automated tests use simulated BLE and do not independently confirm
 hardware behavior. White-temperature, music, gradient, and DIY commands remain
 unverified.
+
+Selected-bulb relative-brightness commands also have H7015 app HCI evidence:
+controlled Bulb 2 changes at 51% and 75% use `33 05 15 02`, with the selection
+mask at offsets 5–6. Neighbouring bulbs' displayed brightness and the selected
+bulb's colour were unchanged. This is capture evidence, not independent physical
+brightness measurement or hardware state readback.
 
 ## Other Models Are Not Verified
 

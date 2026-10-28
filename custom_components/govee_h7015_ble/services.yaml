@@ -53,3 +53,28 @@ snapshot_scene:
       example: Christmas
       selector:
         text:
+
+send_raw:
+  name: Send raw packet (diagnostic)
+  description: >-
+    Sends raw bytes to the lights for protocol testing. Give up to 19 bytes in
+    hex (for example "33 05 02 FF 00 00"); the packet is zero-padded to 20
+    bytes and the XOR checksum is appended. Nothing is validated against the
+    protocol, and the light's state in Home Assistant is not updated.
+  fields:
+    device_id:
+      name: Device
+      description: H7015 string lights to send to.
+      required: true
+      selector:
+        device:
+          filter:
+            - integration: govee_h7015_ble
+          multiple: true
+    hex:
+      name: Hex bytes
+      description: Up to 19 bytes in hex, spaces allowed.
+      required: true
+      example: "33 05 02 FF 00 00"
+      selector:
+        text:

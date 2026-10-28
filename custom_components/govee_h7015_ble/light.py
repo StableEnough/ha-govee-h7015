@@ -211,8 +211,8 @@ class H7015BulbLight(CoordinatorEntity[H7015Coordinator], LightEntity):
     - Creating HA scenes that snapshot per-bulb colors
     - Automation scripts that set specific bulbs
 
-    Per-bulb colors are last-commanded state, not decoded hardware readback.
-    Changes made in the Govee app may therefore leave these entities stale.
+    Per-bulb colors and relative brightness are last-commanded state, not
+    decoded hardware readback. Govee app changes may leave these entities stale.
     """
 
     _attr_has_entity_name = True
@@ -261,6 +261,12 @@ class H7015BulbLight(CoordinatorEntity[H7015Coordinator], LightEntity):
 
     @property
     @override
+    def brightness(self) -> int | None:
+        percent = self._coordinator.get_bulb_brightness(self._bulb_index)
+        return int(percent * 255 / 100) if percent is not None else None
+
+    @property
+    @override
     def color_mode(self) -> ColorMode:
         return ColorMode.RGB
 
@@ -269,14 +275,23 @@ class H7015BulbLight(CoordinatorEntity[H7015Coordinator], LightEntity):
     # ------------------------------------------------------------------
     @override
     async def async_turn_on(self, **kwargs: Any) -> None:
+        if kwargs.get(ATTR_BRIGHTNESS) == 0:
+            await self.async_turn_off()
+            return
+
         # Ensure the main light is on first
         if not self._coordinator.device_state.power:
             await self._coordinator.set_power(True)
 
-        # Default to white if no color specified
-        r, g, b = kwargs.get(ATTR_RGB_COLOR, (255, 255, 255))
+        if ATTR_RGB_COLOR in kwargs or ATTR_BRIGHTNESS not in kwargs or not self.is_on:
+            r, g, b = kwargs.get(
+                ATTR_RGB_COLOR, self._coordinator.get_bulb_restore_color(self._bulb_index)
+            )
+            await self._coordinator.set_bulb(self._bulb_index, r, g, b)
 
-        await self._coordinator.set_bulb(self._bulb_index, r, g, b)
+        if ATTR_BRIGHTNESS in kwargs:
+            percent = max(1, round(kwargs[ATTR_BRIGHTNESS] * 100 / 255))
+            await self._coordinator.set_bulb_brightness(self._bulb_index, percent)
         self.async_write_ha_state()
 
     @override

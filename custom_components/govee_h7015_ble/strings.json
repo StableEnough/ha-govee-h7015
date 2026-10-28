@@ -36,6 +36,10 @@
     "snapshot_scene": {
       "name": "Snapshot current colors as scene",
       "description": "Save the current per-bulb colors as a HA scene you can recall later."
+    },
+    "send_raw": {
+      "name": "Send raw packet (diagnostic)",
+      "description": "Send raw bytes to the lights for protocol testing. Zero-pads to 20 bytes and appends the XOR checksum."
     }
   }
 }

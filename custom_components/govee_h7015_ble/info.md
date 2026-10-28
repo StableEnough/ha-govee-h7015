@@ -16,8 +16,8 @@ using command packets matched to a user-provided H7015 field-test report.
 - **Scene effects**: sunrise, sunset, movie, dating, romantic, twinkle,
   candlelight, snowflake, energetic, breathe, crossing, rainbow.
 - **Music modes** (experimental): energic, spectrum, rolling, rhythm.
-- **Per-bulb RGBIC control** — 15 individual light entities (one per bulb)
-  for controlling each bulb independently from the HA UI.
+- **Per-bulb RGBIC control** — 15 individual light entities with independent
+  colour and relative-brightness controls in the HA UI.
 - **Custom Lovelace card** — visual bulb editor with color pickers and
   presets (Rainbow, Warm White, etc.).
 - **HA Scenes support** — snapshot per-bulb colors as a scene and recall
@@ -37,19 +37,32 @@ using command packets matched to a user-provided H7015 field-test report.
 
 ## Verification limits
 
-The corrected brightness, V2 RGB, segment-mask, and classic-scene packets match
-user-reported hardware tests. This repository has not independently repeated those
-hardware tests. Brightness uses a raw 1–100 percent byte, not the H6127 20–254 scale.
+The corrected brightness, V2 RGB, and classic-scene packets match user-reported
+hardware tests. Selected-bulb RGB also has H7015 app HCI captures and user-confirmed
+physical operation: selecting Bulb 2 produced mask `02`, and Bulbs 2 + 4 produced
+mask `0A` at byte 12. Automated integration tests use simulated BLE, not real lights.
+Brightness uses a raw 1–100 percent byte, not the H6127 20–254 scale.
+Selected-bulb relative brightness is captured as `33 05 15 02 <percent> maskLo maskHi`,
+with mask bytes at offsets 5–6 rather than RGB's 12–13. Bulb 2 captures at 51%
+and 75% preserve its colour and the neighbours' displayed brightness.
 The 12 classic scene names are the app's built-in catalogue; individual scene
-coverage and segment selection were only partially reported in the field tests.
-Dynamic scenes, DIY, music, gradient, and color-temperature encodings remain
-unverified for H7015.
+coverage is partial. Dynamic scenes, DIY, music, gradient, and color-temperature
+encodings remain unverified for H7015.
 
 BLE notifications are subscribed on the same `…2b11` characteristic used for
 writes. Polling sends a heartbeat rather than reading `…2b10`. State is last-commanded
 unless a supported notification updates it; unknown `0xAB` replies and write
 acknowledgements are not decoded as power, brightness, or color. Changes made in the
 Govee app may not appear automatically.
+Successful commands immediately publish last-commanded state to all affected
+entities; whole-string colour changes also refresh the 15 bulb entities.
+
+Turning a bulb off sends black but retains its last non-black colour; turning it
+back on restores that colour, or white if unknown. Per-bulb brightness is relative
+to the separate whole-string setting, stays unknown until commanded, and survives
+bulb off/on. Both caches last only until the integration reloads.
+A successful manual bulb colour or relative-brightness command clears the main
+entity's scene/music effect; a failed write leaves the previous state intact.
 
 ## Installation
 
@@ -153,9 +166,10 @@ You can also use HA's native Scenes UI:
 4. Set each bulb's color to match your desired pattern
 5. Save
 
-> **Note:** Per-bulb writes use the V2 segment-mask packets from the user-provided
-> H7015 field report. Segment selection had partial field coverage; capture
-> HCI traffic if a specific bulb or firmware version behaves differently.
+> **Note:** The app's selected-bulb capture path is **Color → Subsection → select
+> bulbs → scroll below relative brightness → Basic Colors**. The separate
+> **Color Tool** applies swatches to the whole string. HA bulb entities are
+> numbered 1–15; the `set_bulb` service uses indices 0–14.
 
 ## Diagnostics
 

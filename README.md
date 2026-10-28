@@ -70,7 +70,7 @@ HACS cannot install directly from Forgejo. If a public GitHub mirror is maintain
 - Power, brightness, RGB color from the standard HA light UI
 - **Color temperature** (experimental; H7015 white-mode encoding remains unverified)
 - **12 classic scene names** + 4 experimental music modes as HA effects
-- **15 per-bulb light entities** for individual RGBIC control from the HA UI
+- **15 per-bulb light entities** with individual RGB and relative brightness control
 - **Custom Lovelace card** with 12 preset patterns + visual bulb editor
 - **One-click scene creation** via `snapshot_scene` service or card button
 - **Option flow** for configurable heartbeat polling interval (5–3600s)
@@ -80,9 +80,19 @@ HACS cannot install directly from Forgejo. If a public GitHub mirror is maintain
 RGB and per-bulb control use the V2 commands reported working on H7015 firmware
 **1.06.00 or newer**. Brightness is a raw **1–100 percent** byte; power-off uses a
 separate command. Older-firmware fallback is not automatically attempted.
-The corrected packets match a user-provided hardware-test report; this repository's
-tests and simulated BLE runs are not independent hardware verification. Dynamic
-RGBIC scenes, DIY, music, gradient, and white-temperature commands remain unverified.
+The packets match a user-provided hardware-test report and H7015 app HCI captures.
+Selected-bulb RGB has capture evidence and user-confirmed physical operation.
+Selected-bulb relative brightness also matches H7015 app HCI captures; automated
+tests use simulated BLE. Dynamic RGBIC scenes, DIY, music, gradient, and
+white-temperature commands remain unverified.
+
+Each bulb remembers its last non-black commanded colour while the integration
+is loaded, so off/on restores that colour (white if none is known). Its brightness
+slider controls relative brightness independently of the whole-string slider;
+the value stays unknown until commanded and is retained across bulb off/on.
+A successful manual bulb colour or brightness change clears the main entity's
+scene/music effect. These caches are not persisted across integration reloads
+and cannot track changes made outside Home Assistant.
 
 See [`custom_components/govee_h7015_ble/info.md`](custom_components/govee_h7015_ble/info.md)
 for full integration docs.
@@ -178,18 +188,19 @@ See [`esphome/esphome_h7015_bridge.yaml`](esphome/esphome_h7015_bridge.yaml).
 
 ---
 
-## Capturing H7015-specific packets (the one manual step)
+## Capturing H7015-specific packets
 
-The base protocol (power, brightness, color, scenes, music modes) is
-already implemented from sibling Govee device captures. The one thing
-that **may** differ on the H7015 is the per-bulb segment encoding.
+Selected-bulb RGB is confirmed by H7015 app captures and user-observed light output.
+Further captures are useful for unverified modes or firmware differences.
 
-To capture it:
+To capture a controlled colour change:
 
 1. Enable Bluetooth HCI snoop on Android (Developer options → Bluetooth
    HCI snoop log).
-2. Use the Govee app to set individual bulb colors. Start a screen
-   recording so you can correlate taps with packets later.
+2. In the Govee app, choose **Color → Subsection**, select the bulbs, then scroll
+   below the bulb grid and relative brightness to **Basic Colors**. Do not use
+   the separate **Color Tool**, whose swatches apply to the whole string.
+   Record the selection and tap time so each action can be matched to its writes.
 3. Pull the log: `adb bugreport govee.zip && unzip govee.zip -d bugreport`
 4. Extract packets:
    ```bash
@@ -197,10 +208,9 @@ To capture it:
    uv run python standalone/analyze_hci.py \
        bugreport/FS/data/misc/bluetooth/logs/btsnoop_hci.log --govee-only
    ```
-5. If the segment encoding differs from what's in `pkt_segment()`, patch
-   that function in either:
-   - `custom_components/govee_h7015_ble/protocol.py` (HACS path)
-   - `standalone/govee_h7015.py` (MQTT bridge path)
+5. Inspect all writes around the recorded tap time; the analyzer's unique-payload
+   summary omits repeated commands. If the encoding differs, update both
+   `custom_components/govee_h7015_ble/protocol.py` and `standalone/protocol.py`.
 
 ---
 
@@ -347,6 +357,7 @@ and 50% brightness additionally checked against a Govee Home 7.7.01 HCI capture:
 - Byte 19: XOR checksum of bytes 0-18
 - Brightness: `33 04 <percent>` with percent clamped to 1–100
 - RGB V2: `33 05 15 01 R G B 00 00 00 00 00 maskLo maskHi`; all 15 segments use `FF 7F`
+- Relative bulb brightness: `33 05 15 02 <percent> maskLo maskHi` (mask at offsets 5–6)
 - Classic scenes: `33 05 04 codeHi codeLo`; Crossing is 21 and Rainbow is 22
 
 The 12 exposed classic scene names come from the app's built-in catalogue, not a
@@ -354,12 +365,20 @@ claim that all of them have been individually verified on every H7015. Speculati
 H6127-derived scene names have been removed. Classic scene byte order follows the
 reported H7015 field vectors, not the different shared scene helper found in 7.7.02.
 
-The 2026-10-27 H7015 capture places `FF 7F` at zero-based offsets 12–13, not
-7–8 as in the earlier field specification. Red and green full packets are covered
-by capture-based regressions. Individual bulb masks use the same corrected layout,
-but their interpretation still needs a per-bulb capture; white, DIY, and scenes
-were not verified by this capture. The five intervening bytes are zero for captured
-red/green commands; their wider meaning is not established.
+The 2026-10-27 H7015 captures place the LSB-first selection mask at zero-based
+offset 12, not 7 as in the earlier field specification. The seven-byte mask
+uses only its first 15 bits for this string: UI Bulb 2 is `02 00 00 00 00 00 00`;
+Bulbs 2 and 4 together are `0A 00 00 00 00 00 00`. The corresponding blue and cyan
+writes matched the app selection and user-confirmed physical output. The integration
+uses zero-based bulb indices (1 and 3 for those two bulbs); entities display 1–15.
+Whole-string and individual-bulb captures are covered by packet regressions.
+Relative brightness uses a different mask position from RGB: Bulb 2 at 75% sends
+`33 05 15 02 4B 02 00`, padded and checksummed to 20 bytes. Controlled app actions
+captured both 51% and 75% for that bulb without changing its RGB or its neighbours'
+displayed relative brightness. This is command evidence, not decoded state readback.
+The five bytes between RGB and the mask were zero in these colour captures;
+their wider meaning is not established. White-temperature, DIY, and scenes were
+not verified by these captures.
 
 Legacy reference material (not H7015 hardware confirmation):
 BeauJBurroughs/Govee-H6127-Reverse-Engineering,
