@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Forgejo CI for locked Python 3.13 dependencies, Ruff, standalone mypy, Lovelace
   JavaScript syntax, pytest/Hypothesis, Hassfest, and redacted Gitleaks scans.
 - Tag releases publish a manual-install integration ZIP after blocking checks pass.
+- `govee_h7015_ble.send_raw` diagnostic service: sends hex bytes (zero-padded,
+  XOR checksum added) to the lights for protocol verification on real hardware.
 - Repository-wide agent guidance and privacy rules for files and Git identities.
 
 ### Changed

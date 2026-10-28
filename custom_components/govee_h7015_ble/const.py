@@ -19,9 +19,11 @@ DEFAULT_POLL_INTERVAL = 60  # seconds
 # Service names
 SERVICE_SET_BULB = "set_bulb"
 SERVICE_SNAPSHOT_SCENE = "snapshot_scene"
+SERVICE_SEND_RAW = "send_raw"
 ATTR_BULB = "bulb"
 ATTR_RGB = "rgb"
 ATTR_SCENE_NAME = "scene_name"
+ATTR_HEX = "hex"
 
 # BLE endpoints (shared across the Govee RGBIC BLE family)
 SERVICE_UUID: Final = "00010203-0405-0607-0809-0a0b0c0d1910"
